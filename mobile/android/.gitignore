@@ -1,0 +1,13 @@
+gradle-wrapper.jar
+/.gradle
+/captures/
+/gradlew
+/gradlew.bat
+/local.properties
+GeneratedPluginRegistrant.java
+.cxx/
+
+# Signing material: never commit. CI recreates these from secrets.
+key.properties
+**/*.keystore
+**/*.jks

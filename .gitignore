@@ -1,0 +1,25 @@
+# --- Python / backend ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.db
+.env
+
+# --- Flutter / Dart ---
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/build/
+mobile/ios/
+mobile/web/
+mobile/linux/
+mobile/macos/
+mobile/windows/
+*.iml
+
+# --- Editors / OS ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

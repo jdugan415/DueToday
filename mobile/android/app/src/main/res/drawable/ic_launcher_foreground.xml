@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Placeholder launcher glyph (calendar page with a check). 108dp adaptive
+     canvas; keep artwork inside the central 66dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M36,34h36a4,4 0,0 1,4 4v32a4,4 0,0 1,-4 4h-36a4,4 0,0 1,-4 -4v-32a4,4 0,0 1,4 -4z" />
+    <path
+        android:fillColor="#3949AB"
+        android:pathData="M32,38a4,4 0,0 1,4 -4h36a4,4 0,0 1,4 4v6h-44z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M42,28h4v10h-4zM62,28h4v10h-4z" />
+    <path
+        android:fillColor="#3949AB"
+        android:pathData="M45.5,57.5l3,-3l4.5,4.5l9.5,-9.5l3,3l-12.5,12.5z" />
+</vector>

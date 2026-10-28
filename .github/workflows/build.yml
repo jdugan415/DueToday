@@ -1,0 +1,133 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - run: pip install -r requirements.txt
+
+      - run: pytest -q
+
+  android:
+    name: Android App Bundle
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter --version
+
+      - run: flutter pub get
+
+      # Infos (style lints) are reported but don't fail the build; warnings and errors do.
+      - run: flutter analyze --no-fatal-infos
+
+      - run: flutter test
+
+      # Signed when the repo has the keystore secrets (Agent 1 sets these up);
+      # otherwise the release bundle is signed with the debug key. Fork PRs
+      # never receive secrets, so they always take the debug path.
+      - name: Configure release signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::notice::No keystore secret; building with the debug signing key."
+            exit 0
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/upload-keystore.jks
+          cat > android/key.properties <<EOF
+          storeFile=upload-keystore.jks
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
+          EOF
+          echo "Release signing configured."
+
+      - name: Build release App Bundle
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: |
+          # --no-shrink was deprecated in newer Flutter releases (shrinking is
+          # disabled in android/app/build.gradle.kts either way), so only pass
+          # it when this Flutter version still accepts it.
+          SHRINK_FLAG=""
+          if flutter build appbundle -h 2>/dev/null | grep -q -- '--\[no-\]shrink'; then
+            SHRINK_FLAG="--no-shrink"
+          fi
+          DEFINES=""
+          if [ -n "$API_BASE_URL" ]; then
+            DEFINES="--dart-define=API_BASE_URL=$API_BASE_URL"
+          fi
+          flutter build appbundle --release $SHRINK_FLAG $DEFINES \
+            --build-number=${{ github.run_number }}
+
+      # Enforces the zero-permission rule against the *merged* manifest, which
+      # includes anything contributed by plugins.
+      - name: Verify zero-permission manifest
+        run: |
+          MANIFEST=$(find build/app/intermediates -path '*release*' -name AndroidManifest.xml | grep -i merged | head -n 1)
+          if [ -z "$MANIFEST" ]; then
+            echo "::error::Merged release manifest not found under build/app/intermediates"
+            exit 1
+          fi
+          echo "Checking $MANIFEST"
+          PERMS=$(grep -oE '<uses-permission[^>]*android:name="[^"]+"' "$MANIFEST" \
+            | sed -E 's/.*android:name="([^"]+)"/\1/' | sort -u)
+          echo "Declared permissions:"; echo "$PERMS"
+          # INTERNET, plus AndroidX's app-private DYNAMIC_RECEIVER_NOT_EXPORTED
+          # signature permission (not user-facing), are the only ones allowed.
+          BAD=$(echo "$PERMS" | grep -vE '^android\.permission\.INTERNET$|\.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION$' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::Forbidden permissions in merged manifest: $BAD"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: due-today-release-aab-${{ github.run_number }}
+          path: mobile/build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove signing material
+        if: always()
+        run: rm -f android/app/upload-keystore.jks android/key.properties
