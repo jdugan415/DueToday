@@ -107,13 +107,27 @@ class ExportService {
     List<Assignment> assignments,
   ) {
     final now = DateTime.now();
-    final content = render(format, courses, assignments, now: now);
-    final name = fileName(format, now);
-    return SharePlus.instance.share(ShareParams(
-      subject: 'DueToday assignments',
+    return shareFile(
+      content: render(format, courses, assignments, now: now),
+      fileName: fileName(format, now),
+      mimeType: format.mimeType,
       title: 'Export ${format.label}',
-      files: [XFile.fromData(utf8.encode(content), mimeType: format.mimeType, name: name)],
-      fileNameOverrides: [name],
+    );
+  }
+
+  /// Shares [content] as a file through the system share sheet.
+  static Future<ShareResult> shareFile({
+    required String content,
+    required String fileName,
+    required String mimeType,
+    String subject = 'DueToday assignments',
+    String? title,
+  }) {
+    return SharePlus.instance.share(ShareParams(
+      subject: subject,
+      title: title ?? fileName,
+      files: [XFile.fromData(utf8.encode(content), mimeType: mimeType, name: fileName)],
+      fileNameOverrides: [fileName],
     ));
   }
 

@@ -1,14 +1,18 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../models/assignment.dart';
 import '../models/course.dart';
 import '../services/api_service.dart';
 import '../state/assignment_store.dart';
+import '../theme/app_theme.dart';
 import '../widgets/assignment_card.dart';
 
-/// Step 2: review what the parser found. Users fix titles and dates, swipe
-/// away false positives, then save everything to the on-device store.
+/// Step 2: triage what the parser found. Users set the course once, fix
+/// titles and dates inline, discard false positives, then confirm.
 class StagingView extends StatefulWidget {
   const StagingView({super.key, required this.result});
 
@@ -45,12 +49,6 @@ class _StagingViewState extends State<StagingView> {
     _includePast = _items.every((a) => _pastIds.contains(a.id));
   }
 
-  /// What's shown and what Save stores.
-  List<Assignment> get _visible =>
-      _includePast ? _items : _items.where((a) => !_pastIds.contains(a.id)).toList();
-
-  int get _hiddenPastCount => _items.where((a) => _pastIds.contains(a.id)).length;
-
   @override
   void dispose() {
     _codeController.dispose();
@@ -58,18 +56,25 @@ class _StagingViewState extends State<StagingView> {
     super.dispose();
   }
 
+  /// What's shown and what Confirm stores.
+  List<Assignment> get _visible =>
+      _includePast ? _items : _items.where((a) => !_pastIds.contains(a.id)).toList();
+
+  int get _pastCount => _items.where((a) => _pastIds.contains(a.id)).length;
+
   void _replace(Assignment updated) {
     setState(() {
       _items = [for (final a in _items) a.id == updated.id ? updated : a];
     });
   }
 
+  void _discard(Assignment item) => setState(() => _items.removeWhere((a) => a.id == item.id));
+
   Future<void> _pickDate(Assignment item) async {
     final now = DateTime.now();
-    final initial = item.dueAt ?? now;
     final picked = await showDatePicker(
       context: context,
-      initialDate: initial,
+      initialDate: item.dueAt ?? now,
       firstDate: DateTime(now.year - 1),
       lastDate: DateTime(now.year + 2),
     );
@@ -94,11 +99,11 @@ class _StagingViewState extends State<StagingView> {
     ));
   }
 
-  Future<void> _save() async {
+  Future<void> _confirm() async {
     final code = Course.normalizeCode(_codeController.text);
     if (code.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter a course code first.')),
+        const SnackBar(content: Text('Add a course tag first.')),
       );
       return;
     }
@@ -111,109 +116,224 @@ class _StagingViewState extends State<StagingView> {
     navigator.popUntil((route) => route.isFirst);
   }
 
+  Future<void> _discardAll() async {
+    final count = _visible.length;
+    final discard = count == 0 ||
+        await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('Discard all?'),
+                content: Text('The $count detected item${count == 1 ? '' : 's'} won\'t be added. '
+                    'You can parse the syllabus again any time.'),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Keep reviewing')),
+                  FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Discard')),
+                ],
+              ),
+            ) ==
+            true;
+    if (discard && mounted) Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final warnings = widget.result.warnings;
     final visible = _visible;
-    final pastCount = _hiddenPastCount;
+    final pastCount = _pastCount;
     return Scaffold(
-      appBar: AppBar(title: Text('Review ${visible.length} items')),
+      appBar: AppBar(title: const Text('Review')),
       body: ListView(
-        padding: const EdgeInsets.only(bottom: 96),
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Row(
-              children: [
-                Expanded(
-                  flex: 2,
-                  child: TextField(
-                    controller: _codeController,
-                    textCapitalization: TextCapitalization.characters,
-                    decoration: const InputDecoration(labelText: 'Course code'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 3,
-                  child: TextField(
-                    controller: _nameController,
-                    decoration: const InputDecoration(labelText: 'Course name (optional)'),
-                  ),
-                ),
-              ],
-            ),
+          _DetectedBanner(
+            count: visible.length,
+            codeController: _codeController,
+            nameController: _nameController,
           ),
-          for (final warning in warnings)
-            ListTile(
-              dense: true,
-              leading: Icon(Icons.info_outline, color: theme.colorScheme.tertiary),
-              title: Text(warning),
+          for (final warning in widget.result.warnings) _WarningRow(text: warning),
+          if (pastCount > 0) ...[
+            const SizedBox(height: 10),
+            _PastItemsToggle(
+              count: pastCount,
+              included: _includePast,
+              onChanged: (value) => setState(() => _includePast = value),
             ),
-          if (pastCount > 0)
-            Card(
-              margin: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-              elevation: 0,
-              color: theme.colorScheme.secondaryContainer,
-              child: SwitchListTile(
-                secondary: Icon(Icons.history, color: theme.colorScheme.onSecondaryContainer),
-                title: Text(
-                  '$pastCount ${pastCount == 1 ? 'item is' : 'items are'} already past due',
-                  style: TextStyle(color: theme.colorScheme.onSecondaryContainer),
-                ),
-                subtitle: Text(
-                  _includePast
-                      ? 'They will be saved and show up as Overdue.'
-                      : 'Left out so they don\'t fill up Overdue.',
-                  style: TextStyle(color: theme.colorScheme.onSecondaryContainer),
-                ),
-                value: _includePast,
-                onChanged: (value) => setState(() => _includePast = value),
-              ),
-            ),
+          ],
+          const SizedBox(height: 6),
           if (visible.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(32),
-              child: Text('Nothing left to save.', textAlign: TextAlign.center),
+            Padding(
+              padding: const EdgeInsets.all(32),
+              child: Text(
+                'Nothing left to add.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: context.colors.textSecondary),
+              ),
             ),
           for (final item in visible)
             Dismissible(
               key: ValueKey(item.id),
               direction: DismissDirection.endToStart,
               background: Container(
-                color: theme.colorScheme.errorContainer,
-                alignment: Alignment.centerRight,
+                margin: const EdgeInsets.symmetric(vertical: 5),
                 padding: const EdgeInsets.only(right: 24),
-                child: Icon(Icons.delete_outline, color: theme.colorScheme.onErrorContainer),
+                alignment: Alignment.centerRight,
+                decoration: BoxDecoration(
+                  color: context.colors.urgent.withValues(alpha: 0.12),
+                  borderRadius: AppRadius.cardAll,
+                ),
+                child: Icon(Icons.delete_outline_rounded, color: context.colors.urgent),
               ),
-              onDismissed: (_) => setState(() => _items.removeWhere((a) => a.id == item.id)),
-              child: _StagingTile(
+              onDismissed: (_) => _discard(item),
+              child: _StagingCard(
                 item: item,
                 isPast: _pastIds.contains(item.id),
                 onTitleChanged: (title) => _replace(item.copyWith(title: title)),
                 onPickDate: () => _pickDate(item),
                 onPickTime: () => _pickTime(item),
+                onDiscard: () => _discard(item),
               ),
             ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: visible.isEmpty ? null : _save,
-        icon: const Icon(Icons.check),
-        label: Text('Save ${visible.length}'),
+      bottomNavigationBar: _BottomDock(
+        count: visible.length,
+        onDiscardAll: _discardAll,
+        onConfirm: visible.isEmpty ? null : _confirm,
       ),
     );
   }
 }
 
-class _StagingTile extends StatelessWidget {
-  const _StagingTile({
+class _DetectedBanner extends StatelessWidget {
+  const _DetectedBanner({required this.count, required this.codeController, required this.nameController});
+
+  final int count;
+  final TextEditingController codeController;
+  final TextEditingController nameController;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = context.colors;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: colors.accent.withValues(alpha: 0.18)),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [theme.colorScheme.primaryContainer, colors.surface],
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: colors.accent, borderRadius: BorderRadius.circular(12)),
+                child: Icon(Icons.auto_awesome_rounded, size: 18, color: theme.colorScheme.onPrimary),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  '$count ${count == 1 ? 'Assignment' : 'Assignments'} Detected',
+                  style: theme.textTheme.titleLarge,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Set the course once, it applies to every item. Tap a date or time to change it.',
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: 14),
+          // Stacked, not side by side: course codes like "MATH 2057" need the
+          // full width on narrow phones.
+          TextField(
+            controller: codeController,
+            textCapitalization: TextCapitalization.characters,
+            decoration: const InputDecoration(
+              labelText: 'Course tag (applies to all items)',
+              prefixIcon: Icon(Icons.sell_outlined, size: 18),
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: nameController,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(labelText: 'Course name (optional)'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WarningRow extends StatelessWidget {
+  const _WarningRow({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 10, 4, 0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline_rounded, size: 16, color: colors.warning),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text, style: Theme.of(context).textTheme.bodySmall)),
+        ],
+      ),
+    );
+  }
+}
+
+class _PastItemsToggle extends StatelessWidget {
+  const _PastItemsToggle({required this.count, required this.included, required this.onChanged});
+
+  final int count;
+  final bool included;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    // A Material (not a colored Container) so the tile's ink ripple is visible.
+    return Material(
+      color: colors.surface,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(borderRadius: AppRadius.cardAll, side: BorderSide(color: colors.border)),
+      child: SwitchListTile(
+        secondary: Icon(Icons.history_rounded, color: colors.textSecondary),
+        title: Text(
+          '$count ${count == 1 ? 'item is' : 'items are'} already past due',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        subtitle: Text(
+          included ? 'They will be saved and show up as Overdue.' : 'Left out so they don\'t fill up Overdue.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        value: included,
+        onChanged: onChanged,
+      ),
+    );
+  }
+}
+
+class _StagingCard extends StatelessWidget {
+  const _StagingCard({
     required this.item,
     required this.isPast,
     required this.onTitleChanged,
     required this.onPickDate,
     required this.onPickTime,
+    required this.onDiscard,
   });
 
   final Assignment item;
@@ -221,13 +341,17 @@ class _StagingTile extends StatelessWidget {
   final ValueChanged<String> onTitleChanged;
   final VoidCallback onPickDate;
   final VoidCallback onPickTime;
+  final VoidCallback onDiscard;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colors = context.colors;
+    final due = item.dueAt;
     return Card(
+      margin: const EdgeInsets.symmetric(vertical: 5),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+        padding: const EdgeInsets.fromLTRB(14, 6, 6, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -239,44 +363,147 @@ class _StagingTile extends StatelessWidget {
                     onChanged: onTitleChanged,
                     style: theme.textTheme.titleMedium,
                     decoration: const InputDecoration(
-                      border: InputBorder.none,
+                      filled: false,
                       isDense: true,
+                      contentPadding: EdgeInsets.symmetric(vertical: 10),
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
                     ),
                   ),
                 ),
-                PriorityBadge(priority: item.priority),
-              ],
-            ),
-            Row(
-              children: [
-                TextButton.icon(
-                  onPressed: onPickDate,
-                  icon: const Icon(Icons.event, size: 18),
-                  label: Text(formatDue(item)),
-                ),
-                if (item.dueAt != null)
-                  TextButton.icon(
-                    onPressed: onPickTime,
-                    icon: const Icon(Icons.schedule, size: 18),
-                    label: Text(item.timeSpecified ? 'Change time' : 'Default 11:59 PM'),
-                  ),
-                const Spacer(),
-                if (isPast)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: Text(
-                      'Past due',
-                      style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.error),
-                    ),
-                  ),
                 if (item.needsReview)
                   Tooltip(
                     message: item.sourceLine ?? 'Please double-check this item',
-                    child: Icon(Icons.warning_amber_rounded, color: theme.colorScheme.tertiary),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Icon(Icons.error_outline_rounded, size: 18, color: colors.warning),
+                    ),
                   ),
+                IconButton(
+                  tooltip: 'Discard',
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(Icons.delete_outline_rounded, size: 20, color: colors.textSecondary),
+                  onPressed: onDiscard,
+                ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _PickerChip(
+                  icon: Icons.event_rounded,
+                  label: due == null ? 'Set date' : DateFormat('MMM d, y').format(due),
+                  emphasize: due == null,
+                  onTap: onPickDate,
+                ),
+                if (due != null)
+                  _PickerChip(
+                    icon: Icons.schedule_rounded,
+                    label: DateFormat('h:mm a').format(due),
+                    onTap: onPickTime,
+                  ),
+                PriorityBadge(priority: item.priority),
+                if (isPast)
+                  Text('PAST DUE', style: theme.textTheme.labelSmall?.copyWith(color: colors.urgent)),
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Tap-to-pick chip: `[ 📅 Nov 12, 2026 ]`, `[ ⏰ 11:59 PM ]`.
+class _PickerChip extends StatelessWidget {
+  const _PickerChip({required this.icon, required this.label, required this.onTap, this.emphasize = false});
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool emphasize;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final scheme = Theme.of(context).colorScheme;
+    final fg = emphasize ? scheme.onPrimaryContainer : colors.textPrimary;
+    return Material(
+      color: emphasize ? scheme.primaryContainer : colors.fieldFill,
+      shape: const StadiumBorder(),
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 15, color: emphasize ? fg : colors.textSecondary),
+              const SizedBox(width: 6),
+              Text(label, style: Theme.of(context).textTheme.labelMedium?.copyWith(color: fg)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Frosted dock pinned above the system navigation bar.
+class _BottomDock extends StatelessWidget {
+  const _BottomDock({required this.count, required this.onDiscardAll, required this.onConfirm});
+
+  final int count;
+  final VoidCallback onDiscardAll;
+  final VoidCallback? onConfirm;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: Container(
+          decoration: BoxDecoration(
+            color: colors.surface.withValues(alpha: 0.86),
+            border: Border(top: BorderSide(color: colors.border)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+              child: Row(
+                children: [
+                  OutlinedButton(onPressed: onDiscardAll, child: const Text('Discard All')),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: onConfirm,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              'Confirm & Add All ($count)',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          const Icon(Icons.arrow_forward_rounded, size: 18),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );

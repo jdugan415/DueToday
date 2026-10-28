@@ -175,20 +175,43 @@ class ApiService {
     'Accept': 'application/json',
   };
 
-  Future<Map<String, dynamic>> _send(
+  /// `GET /api/courses/{code}/calendar.ics`: the course as an RFC 5545
+  /// calendar file, for sharing or importing into any calendar app.
+  Future<String> fetchCalendarIcs(String shareCode) async {
+    final response = await _request(() => _client.get(Uri.parse(calendarFeedUrl(shareCode))));
+    if (response.statusCode == 200) return utf8.decode(response.bodyBytes);
+    throw ApiException(_errorMessage(response.statusCode, _tryDecode(response)), statusCode: response.statusCode);
+  }
+
+  /// Runs [request] with a timeout and turns network failures into [ApiException].
+  Future<http.Response> _request(
     Future<http.Response> Function() request, {
     Duration timeout = ApiService.timeout,
   }) async {
-    final http.Response response;
     try {
-      response = await request().timeout(timeout);
+      return await request().timeout(timeout);
     } on TimeoutException {
       throw const ApiException('The server took too long to respond. Try again in a moment.');
     } on http.ClientException catch (error) {
       throw ApiException('Could not reach the DueToday server (${error.message}).');
     }
+  }
 
-    final decoded = response.body.isEmpty ? null : jsonDecode(utf8.decode(response.bodyBytes));
+  static Object? _tryDecode(http.Response response) {
+    if (response.body.isEmpty) return null;
+    try {
+      return jsonDecode(utf8.decode(response.bodyBytes));
+    } on FormatException {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>> _send(
+    Future<http.Response> Function() request, {
+    Duration timeout = ApiService.timeout,
+  }) async {
+    final response = await _request(request, timeout: timeout);
+    final decoded = _tryDecode(response);
     if (response.statusCode >= 200 && response.statusCode < 300 && decoded is Map<String, dynamic>) {
       return decoded;
     }

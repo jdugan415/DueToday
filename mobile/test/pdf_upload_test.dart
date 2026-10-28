@@ -140,7 +140,7 @@ void main() {
 
       await tester.pump(const Duration(milliseconds: 60));
       await tester.pumpAndSettle();
-      expect(find.text('Review 1 items'), findsOneWidget);
+      expect(find.text('1 Assignment Detected'), findsOneWidget);
       expect(find.text('Midterm Exam'), findsOneWidget);
     });
 

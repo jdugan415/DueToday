@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 
 import '../models/assignment.dart';
 import '../state/assignment_store.dart';
-import '../theme.dart';
 import '../widgets/assignment_card.dart';
 
 /// Full editor for a saved assignment. Opened from a dashboard card with a
@@ -125,7 +124,7 @@ class _EditAssignmentViewState extends State<EditAssignmentView> {
         children: [
           Row(
             children: [
-              CourseBadge(code: widget.assignment.courseCode, color: courseColor(colorIndex)),
+              CoursePill(code: widget.assignment.courseCode, colorIndex: colorIndex),
               const SizedBox(width: 8),
               Text(toBeginningOfSentenceCase(widget.assignment.taskType), style: theme.textTheme.labelLarge),
             ],
@@ -134,7 +133,7 @@ class _EditAssignmentViewState extends State<EditAssignmentView> {
           TextField(
             controller: _title,
             textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(labelText: 'Title', border: OutlineInputBorder()),
+            decoration: const InputDecoration(labelText: 'Title'),
             onChanged: (_) => setState(() {}),
           ),
           const SizedBox(height: 24),
@@ -184,7 +183,6 @@ class _EditAssignmentViewState extends State<EditAssignmentView> {
             decoration: const InputDecoration(
               labelText: 'Notes',
               hintText: 'Rubric link, room number, what to bring…',
-              border: OutlineInputBorder(),
               alignLabelWithHint: true,
             ),
           ),

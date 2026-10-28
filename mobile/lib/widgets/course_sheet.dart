@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../models/course.dart';
 import '../state/assignment_store.dart';
-import '../theme.dart';
+import '../theme/app_theme.dart';
 
 /// Bottom sheet to rename a course, change its badge color, or delete it.
 Future<void> showCourseSheet(BuildContext context, Course course) => showModalBottomSheet<void>(
@@ -76,7 +76,7 @@ class _CourseSheetState extends State<_CourseSheet> {
           TextField(
             controller: _name,
             textCapitalization: TextCapitalization.words,
-            decoration: const InputDecoration(labelText: 'Course name', border: OutlineInputBorder()),
+            decoration: const InputDecoration(labelText: 'Course name'),
           ),
           const SizedBox(height: 16),
           Text('Badge color', style: theme.textTheme.titleSmall),

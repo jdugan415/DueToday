@@ -5,33 +5,50 @@ import 'package:provider/provider.dart';
 import '../models/course.dart';
 import '../models/share_code.dart';
 import '../services/api_service.dart';
+import '../services/export_service.dart';
 import '../state/assignment_store.dart';
+import '../theme/app_theme.dart';
+
+const TextStyle _codeStyle = TextStyle(
+  fontFamily: 'monospace',
+  fontFamilyFallback: ['RobotoMono', 'Courier New'],
+  fontSize: 28,
+  fontWeight: FontWeight.w700,
+  letterSpacing: 8,
+);
 
 /// Class-code sharing: one student publishes a parsed course and gets a
 /// 5-character code; classmates type the code to import the same schedule.
 class ShareDialog {
   ShareDialog._();
 
-  static Future<void> showExport(BuildContext context, Course course) =>
-      showDialog<void>(context: context, builder: (_) => _ExportDialog(course: course));
+  /// Bottom sheet with the course's share code (created on first open).
+  static Future<void> showExport(BuildContext context, Course course) => showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (_) => _ShareSheet(course: course),
+      );
 
   static Future<void> showImport(BuildContext context) =>
       showDialog<void>(context: context, builder: (_) => const _ImportDialog());
 }
 
-class _ExportDialog extends StatefulWidget {
-  const _ExportDialog({required this.course});
+class _ShareSheet extends StatefulWidget {
+  const _ShareSheet({required this.course});
 
   final Course course;
 
   @override
-  State<_ExportDialog> createState() => _ExportDialogState();
+  State<_ShareSheet> createState() => _ShareSheetState();
 }
 
-class _ExportDialogState extends State<_ExportDialog> {
+class _ShareSheetState extends State<_ShareSheet> {
   String? _code;
   String? _error;
   bool _loading = false;
+  bool _copied = false;
+  bool _exporting = false;
 
   @override
   void initState() {
@@ -49,6 +66,7 @@ class _ExportDialogState extends State<_ExportDialog> {
     setState(() {
       _loading = true;
       _error = null;
+      _copied = false;
     });
     try {
       final code = await api.shareCourse(widget.course, store.assignmentsFor(widget.course.code));
@@ -63,61 +81,151 @@ class _ExportDialogState extends State<_ExportDialog> {
     }
   }
 
-  Future<void> _copy(String text, String confirmation) async {
+  Future<void> _copyCode(String code) async {
+    HapticFeedback.lightImpact();
+    await Clipboard.setData(ClipboardData(text: code));
+    if (mounted) setState(() => _copied = true);
+  }
+
+  Future<void> _copyFeedLink(String code) async {
     final messenger = ScaffoldMessenger.of(context);
-    await Clipboard.setData(ClipboardData(text: text));
-    messenger.showSnackBar(SnackBar(content: Text(confirmation)));
+    HapticFeedback.selectionClick();
+    await Clipboard.setData(ClipboardData(text: context.read<ApiService>().calendarFeedUrl(code)));
+    messenger.showSnackBar(const SnackBar(
+      content: Text('Subscribe link copied. In Google Calendar: Other calendars → From URL.'),
+    ));
+  }
+
+  Future<void> _exportIcs(String code) async {
+    final api = context.read<ApiService>();
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _exporting = true);
+    try {
+      final ics = await api.fetchCalendarIcs(code);
+      await ExportService.shareFile(
+        content: ics,
+        fileName: '${widget.course.code.replaceAll(' ', '')}-$code.ics',
+        mimeType: 'text/calendar',
+        subject: '${widget.course.code} deadlines',
+        title: 'Export ${widget.course.code} calendar',
+      );
+    } on ApiException catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text(error.message)));
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colors = context.colors;
     final code = _code;
-    return AlertDialog(
-      title: Text('Share ${widget.course.code}'),
-      content: SizedBox(
-        width: 280,
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Text('Share ${widget.course.code}', style: theme.textTheme.titleLarge),
+            const SizedBox(height: 4),
+            Text(
+              'Classmates enter this code in DueToday to import the same schedule.',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 20),
             if (_loading)
-              const Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator())
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 36),
+                child: Center(child: CircularProgressIndicator()),
+              )
             else if (_error != null)
-              Text(_error!, style: TextStyle(color: theme.colorScheme.error))
+              _ErrorBox(message: _error!, onRetry: _generate)
             else if (code != null) ...[
-              const Text('Classmates can enter this code to import the schedule:'),
-              const SizedBox(height: 16),
-              SelectableText(
-                code,
-                style: theme.textTheme.displaySmall?.copyWith(letterSpacing: 8),
+              Material(
+                color: colors.fieldFill,
+                borderRadius: AppRadius.cardAll,
+                child: InkWell(
+                  borderRadius: AppRadius.cardAll,
+                  onTap: () => _copyCode(code),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 22),
+                    child: Column(
+                      children: [
+                        Semantics(
+                          label: 'Share code ${code.split('').join(' ')}. Tap to copy.',
+                          excludeSemantics: true,
+                          child: Text(code, style: _codeStyle.copyWith(color: colors.textPrimary)),
+                        ),
+                        const SizedBox(height: 8),
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 200),
+                          child: Text(
+                            _copied ? '✓ Copied to clipboard!' : 'Tap to copy',
+                            key: ValueKey(_copied),
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: _copied ? colors.success : colors.textSecondary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
               const SizedBox(height: 16),
-              OutlinedButton.icon(
-                icon: const Icon(Icons.link),
-                label: const Text('Copy calendar link'),
-                onPressed: () => _copy(
-                  context.read<ApiService>().calendarFeedUrl(code),
-                  'Calendar link copied. In Google Calendar, add it under Other calendars → From URL.',
-                ),
+              FilledButton.tonalIcon(
+                onPressed: _exporting ? null : () => _exportIcs(code),
+                icon: _exporting
+                    ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.event_note_rounded),
+                label: const Text('Export as .ics Calendar File'),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  TextButton.icon(
+                    onPressed: () => _copyFeedLink(code),
+                    icon: const Icon(Icons.link_rounded, size: 18),
+                    label: const Text('Copy subscribe link'),
+                  ),
+                  TextButton(onPressed: _generate, child: const Text('New code')),
+                ],
               ),
             ],
           ],
         ),
       ),
-      actions: [
-        if (!_loading)
-          TextButton(
-            onPressed: _generate,
-            child: Text(code == null ? 'Retry' : 'New code'),
-          ),
-        if (code != null && !_loading)
-          TextButton.icon(
-            icon: const Icon(Icons.copy),
-            label: const Text('Copy'),
-            onPressed: () => _copy(code, 'Copied $code'),
-          ),
-        FilledButton(onPressed: () => Navigator.pop(context), child: const Text('Done')),
-      ],
+    );
+  }
+}
+
+class _ErrorBox extends StatelessWidget {
+  const _ErrorBox({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.urgent.withValues(alpha: 0.08),
+        borderRadius: AppRadius.cardAll,
+        border: Border.all(color: colors.urgent.withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        children: [
+          Text(message, textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium),
+          const SizedBox(height: 10),
+          OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
+        ],
+      ),
     );
   }
 }
@@ -153,6 +261,7 @@ class _ImportDialogState extends State<_ImportDialog> {
       final shared = await api.importCourse(_controller.text);
       await store.addAll(shared.course, shared.assignments);
       if (!mounted) return;
+      HapticFeedback.mediumImpact();
       navigator.pop();
       messenger.showSnackBar(SnackBar(
         content: Text('Imported ${shared.assignments.length} items for ${shared.course.code}'),
@@ -177,12 +286,12 @@ class _ImportDialogState extends State<_ImportDialog> {
         maxLength: ShareCode.length,
         textCapitalization: TextCapitalization.characters,
         textAlign: TextAlign.center,
-        style: Theme.of(context).textTheme.headlineMedium?.copyWith(letterSpacing: 8),
+        style: _codeStyle.copyWith(color: context.colors.textPrimary),
         inputFormatters: [
           FilteringTextInputFormatter.allow(RegExp('[A-Za-z0-9]')),
           const UpperCaseTextFormatter(),
         ],
-        decoration: InputDecoration(hintText: 'ABC23', errorText: _error),
+        decoration: InputDecoration(hintText: 'ABC23', errorText: _error, counterText: ''),
         onChanged: (_) => setState(() => _error = null),
         onSubmitted: (_) {
           if (valid && !_loading) _import();

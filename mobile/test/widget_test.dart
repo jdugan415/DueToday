@@ -20,18 +20,31 @@ Future<AssignmentStore> _store(DateTime now) async {
 ApiService _offlineApi() =>
     ApiService(baseUrl: 'http://test', client: MockClient((_) async => http.Response('', 503)));
 
-void main() {
-  final now = DateTime(2026, 9, 1, 9);
+/// A tall phone-sized screen, so the lazily built dashboard shows every card.
+void _usePhoneScreen(WidgetTester tester) {
+  tester.view.physicalSize = const Size(1080, 2400);
+  tester.view.devicePixelRatio = 2.4;
+  addTearDown(tester.view.reset);
+}
 
-  testWidgets('shows the empty state on first launch', (tester) async {
+void main() {
+  final now = DateTime(2026, 9, 1, 9); // Tuesday 9 AM
+
+  testWidgets('first launch shows the hero header and the caught-up state', (tester) async {
+    _usePhoneScreen(tester);
     await tester.pumpWidget(DueTodayApp(store: await _store(now), api: _offlineApi()));
 
-    expect(find.text('DueToday'), findsOneWidget);
-    expect(find.text('No assignments yet'), findsOneWidget);
-    expect(find.text('Add syllabus'), findsOneWidget);
+    expect(find.text('TUESDAY, SEP 1'), findsOneWidget);
+    expect(find.text('My Deadlines'), findsOneWidget);
+    expect(find.text('0 Due Today'), findsOneWidget);
+    expect(find.text('All caught up!'), findsOneWidget);
+    expect(find.text('No upcoming deadlines on your radar'), findsOneWidget);
+    expect(find.text('Add Course'), findsOneWidget);
+    expect(find.text('Parse Syllabus'), findsOneWidget);
   });
 
   testWidgets('lists saved assignments under Due Today and completes them', (tester) async {
+    _usePhoneScreen(tester);
     final store = await _store(now);
     await store.addAll(const Course(code: 'CSC 4330'), [
       Assignment(
@@ -39,15 +52,21 @@ void main() {
         courseCode: 'CSC 4330',
         title: 'Lab 1',
         dueAt: DateTime(2026, 9, 1, 23, 59),
+        timeSpecified: true,
+        weightPercent: 15,
         priority: Priority.high,
       ),
     ]);
 
     await tester.pumpWidget(DueTodayApp(store: store, api: _offlineApi()));
 
-    expect(find.text('Due Today (1)'), findsOneWidget);
+    expect(find.text('1 Due Today'), findsOneWidget); // summary pill
+    expect(find.text('Due Today'), findsOneWidget); // sticky section header
     expect(find.text('Lab 1'), findsOneWidget);
-    expect(find.text('High'), findsOneWidget);
+    expect(find.text('Due in 14h'), findsOneWidget);
+    expect(find.text('Tue, Sep 1 · 11:59 PM  ·  15% of grade'), findsOneWidget);
+    expect(find.byIcon(Icons.flag_rounded), findsOneWidget); // high priority
+    expect(find.text('Add to Calendar'), findsOneWidget);
 
     await tester.tap(find.byType(Checkbox));
     await tester.pumpAndSettle();
@@ -68,7 +87,19 @@ void main() {
     return store;
   }
 
+  testWidgets('summary pills and countdown badges reflect urgency', (tester) async {
+    _usePhoneScreen(tester);
+    await tester.pumpWidget(DueTodayApp(store: await seeded(), api: _offlineApi()));
+
+    expect(find.text('1 Due Today'), findsOneWidget);
+    expect(find.text('2 This Week'), findsOneWidget);
+    expect(find.text('Due in 14h'), findsOneWidget); // Lab 1, tonight
+    expect(find.text('Thursday'), findsOneWidget); // Quiz 2
+    expect(find.text('Friday'), findsOneWidget); // Problem Set 1
+  });
+
   testWidgets('swipe right completes, Undo restores', (tester) async {
+    _usePhoneScreen(tester);
     final store = await seeded();
     await tester.pumpWidget(DueTodayApp(store: store, api: _offlineApi()));
 
@@ -83,6 +114,7 @@ void main() {
   });
 
   testWidgets('swipe left deletes, Undo restores', (tester) async {
+    _usePhoneScreen(tester);
     final store = await seeded();
     await tester.pumpWidget(DueTodayApp(store: store, api: _offlineApi()));
 
@@ -97,6 +129,7 @@ void main() {
   });
 
   testWidgets('tapping a card opens the editor and saves changes', (tester) async {
+    _usePhoneScreen(tester);
     final store = await seeded();
     await tester.pumpWidget(DueTodayApp(store: store, api: _offlineApi()));
 
@@ -118,6 +151,7 @@ void main() {
   });
 
   testWidgets('course chips filter the dashboard', (tester) async {
+    _usePhoneScreen(tester);
     final store = await seeded();
     await tester.pumpWidget(DueTodayApp(store: store, api: _offlineApi()));
     expect(find.text('Problem Set 1'), findsOneWidget);
@@ -133,6 +167,7 @@ void main() {
   });
 
   testWidgets('course sheet renames and deletes a course', (tester) async {
+    _usePhoneScreen(tester);
     final store = await seeded();
     await tester.pumpWidget(DueTodayApp(store: store, api: _offlineApi()));
 
@@ -153,12 +188,25 @@ void main() {
     expect(store.assignments.any((a) => a.courseCode == 'MATH 2057'), isFalse);
   });
 
-  testWidgets('opens the paste screen', (tester) async {
+  testWidgets('Parse Syllabus opens the paste screen', (tester) async {
+    _usePhoneScreen(tester);
     await tester.pumpWidget(DueTodayApp(store: await _store(now), api: _offlineApi()));
-    await tester.tap(find.text('Add syllabus'));
+    await tester.tap(find.text('Parse Syllabus'));
     await tester.pumpAndSettle();
 
     expect(find.text('Parse Schedule'), findsOneWidget);
     expect(find.byType(TextField), findsNWidgets(2));
+  });
+
+  testWidgets('renders in dark mode', (tester) async {
+    _usePhoneScreen(tester);
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+    addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+    await tester.pumpWidget(DueTodayApp(store: await seeded(), api: _offlineApi()));
+
+    final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
+    expect(Theme.of(tester.element(find.byWidget(scaffold))).brightness, Brightness.dark);
+    expect(find.text('My Deadlines'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

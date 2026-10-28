@@ -5,9 +5,10 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../models/assignment.dart';
+import '../models/due_label.dart';
 import '../services/calendar_service.dart';
 import '../state/assignment_store.dart';
-import '../theme.dart';
+import '../theme/app_theme.dart';
 import '../views/edit_assignment_view.dart';
 
 String formatDue(Assignment assignment) {
@@ -17,9 +18,9 @@ String formatDue(Assignment assignment) {
   return assignment.timeSpecified ? '$day · ${DateFormat('h:mm a').format(due)}' : day;
 }
 
-/// Dashboard row. Swipe right to complete (or un-complete), swipe left to
+/// Dashboard card. Swipe right to complete (or un-complete), swipe left to
 /// delete; both offer Undo. Tap opens [EditAssignmentView] with a container
-/// transform.
+/// transform. Items due within 24 hours get a rose accent strip.
 class AssignmentCard extends StatelessWidget {
   const AssignmentCard({super.key, required this.assignment});
 
@@ -27,40 +28,41 @@ class AssignmentCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final colors = context.colors;
     final store = context.read<AssignmentStore>();
 
     return Dismissible(
       key: ValueKey('dismiss-${assignment.id}'),
       background: _SwipeBackground(
         alignment: Alignment.centerLeft,
-        color: scheme.primaryContainer,
-        foreground: scheme.onPrimaryContainer,
-        icon: assignment.completed ? Icons.undo : Icons.check_circle_outline,
+        color: colors.success.withValues(alpha: 0.14),
+        foreground: colors.success,
+        icon: assignment.completed ? Icons.undo_rounded : Icons.check_circle_rounded,
         label: assignment.completed ? 'Mark not done' : 'Complete',
       ),
       secondaryBackground: _SwipeBackground(
         alignment: Alignment.centerRight,
-        color: scheme.errorContainer,
-        foreground: scheme.onErrorContainer,
-        icon: Icons.delete_outline,
+        color: colors.urgent.withValues(alpha: 0.12),
+        foreground: colors.urgent,
+        icon: Icons.delete_outline_rounded,
         label: 'Delete',
       ),
       onDismissed: (direction) => direction == DismissDirection.startToEnd
           ? _toggleWithUndo(context, store)
           : _deleteWithUndo(context, store),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
         child: OpenContainer(
-          closedColor: scheme.surfaceContainerLow,
-          openColor: scheme.surface,
-          middleColor: scheme.surface,
+          closedColor: colors.surface,
+          openColor: colors.background,
+          middleColor: colors.surface,
           closedElevation: 0,
-          closedShape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+          openElevation: 0,
+          closedShape: RoundedRectangleBorder(borderRadius: AppRadius.cardAll, side: hairline(context)),
           transitionDuration: const Duration(milliseconds: 350),
           openBuilder: (context, _) => EditAssignmentView(assignment: assignment),
           // During the transform the closed card is drawn in an overlay with no
-          // Material ancestor, which Checkbox/IconButton require.
+          // Material ancestor, which Checkbox/InkWell require.
           closedBuilder: (context, _) => Material(
             type: MaterialType.transparency,
             child: _CardBody(assignment: assignment, store: store),
@@ -73,6 +75,7 @@ class AssignmentCard extends StatelessWidget {
   void _toggleWithUndo(BuildContext context, AssignmentStore store) {
     final messenger = ScaffoldMessenger.of(context);
     final wasCompleted = assignment.completed;
+    if (!wasCompleted) HapticFeedback.mediumImpact();
     store.toggleCompleted(assignment.id);
     messenger
       ..hideCurrentSnackBar()
@@ -104,67 +107,105 @@ class _CardBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colors = context.colors;
     final colorIndex = context.select<AssignmentStore, int>(
-      (s) => s.courseFor(assignment.courseCode)?.colorIndex ?? 0,
+      (s) => s.courseFor(assignment.courseCode)?.colorIndex ?? courseColorIndexFor(assignment.courseCode),
     );
-    final details = [
-      formatDue(assignment),
-      if (assignment.weightPercent != null) '${_trim(assignment.weightPercent!)}%',
-      if (assignment.points != null) '${assignment.points} pts',
-    ].join('  •  ');
+    final label = DueLabel.of(assignment, store.now());
+    final showStrip = label.urgency == Urgency.imminent || label.urgency == Urgency.overdue;
     final titleStyle = theme.textTheme.titleMedium!;
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 8, 4, 8),
-      child: Row(
-        children: [
-          Checkbox(
-            value: assignment.completed,
-            semanticLabel: 'Mark ${assignment.title} complete',
-            onChanged: (_) => store.toggleCompleted(assignment.id),
-          ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AnimatedDefaultTextStyle(
-                  duration: const Duration(milliseconds: 250),
-                  style: assignment.completed
-                      ? titleStyle.copyWith(
-                          decoration: TextDecoration.lineThrough,
-                          color: theme.colorScheme.onSurfaceVariant,
-                        )
-                      : titleStyle,
-                  child: Text(assignment.title),
-                ),
-                const SizedBox(height: 4),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    CourseBadge(code: assignment.courseCode, color: courseColor(colorIndex)),
-                    Text(details, style: theme.textTheme.bodySmall),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          PriorityBadge(priority: assignment.priority),
-          IconButton(
-            tooltip: assignment.addedToCalendar ? 'Add to calendar again' : 'Add to calendar',
-            icon: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 250),
-              transitionBuilder: (child, animation) => ScaleTransition(scale: animation, child: child),
-              child: Icon(
-                assignment.addedToCalendar ? Icons.event_available : Icons.calendar_month_outlined,
-                key: ValueKey(assignment.addedToCalendar),
+    final meta = [
+      formatDue(assignment),
+      if (assignment.weightPercent != null) '${_trim(assignment.weightPercent!)}% of grade',
+      if (assignment.points != null) '${assignment.points} pts',
+    ].join('  ·  ');
+
+    return Stack(
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(showStrip ? 18 : 16, 12, 8, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Flexible(child: CoursePill(code: assignment.courseCode, colorIndex: colorIndex)),
+                        if (assignment.priority == Priority.high && !assignment.completed) ...[
+                          const SizedBox(width: 6),
+                          Icon(Icons.flag_rounded, size: 15, color: colors.urgent, semanticLabel: 'High priority'),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _UrgencyBadge(label: label),
+                  const SizedBox(width: 8),
+                ],
               ),
-            ),
-            onPressed: () => _addToCalendar(context),
+              const SizedBox(height: 8),
+              AnimatedDefaultTextStyle(
+                duration: const Duration(milliseconds: 250),
+                style: assignment.completed
+                    ? titleStyle.copyWith(decoration: TextDecoration.lineThrough, color: colors.textSecondary)
+                    : titleStyle,
+                child: Text(assignment.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Icon(
+                    assignment.weightPercent != null ? Icons.sell_outlined : Icons.schedule_rounded,
+                    size: 13,
+                    color: colors.textSecondary,
+                  ),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(meta, style: theme.textTheme.bodySmall, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  _CalendarPill(
+                    added: assignment.addedToCalendar,
+                    enabled: assignment.dueAt != null,
+                    onTap: () => _addToCalendar(context),
+                  ),
+                  const Spacer(),
+                  Transform.scale(
+                    scale: 1.15,
+                    child: Checkbox(
+                      value: assignment.completed,
+                      semanticLabel: 'Mark ${assignment.title} complete',
+                      onChanged: (_) {
+                        if (!assignment.completed) {
+                          HapticFeedback.mediumImpact();
+                        } else {
+                          HapticFeedback.selectionClick();
+                        }
+                        store.toggleCompleted(assignment.id);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+        if (showStrip)
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 4,
+            child: ColoredBox(color: label.urgency == Urgency.overdue ? colors.urgent : const Color(0xFFFB7185)),
+          ),
+      ],
     );
   }
 
@@ -175,6 +216,7 @@ class _CardBody extends StatelessWidget {
       messenger.showSnackBar(const SnackBar(content: Text('Set a due date first.')));
       return;
     }
+    HapticFeedback.lightImpact();
     bool launched;
     try {
       launched = await CalendarService.addAssignmentToDeviceCalendar(
@@ -189,14 +231,85 @@ class _CardBody extends StatelessWidget {
     if (launched) {
       await store.markAddedToCalendar(assignment.id);
     } else {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('No calendar app found on this device.')),
-      );
+      messenger.showSnackBar(const SnackBar(content: Text('No calendar app found on this device.')));
     }
   }
 
   static String _trim(double value) =>
       value == value.roundToDouble() ? value.toStringAsFixed(0) : value.toString();
+}
+
+class _UrgencyBadge extends StatelessWidget {
+  const _UrgencyBadge({required this.label});
+
+  final DueLabel label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final (Color color, FontWeight weight) = switch (label.urgency) {
+      Urgency.overdue || Urgency.imminent => (colors.urgent, FontWeight.w800),
+      Urgency.soon => (colors.warning, FontWeight.w700),
+      Urgency.calm => (label.text == 'Done' ? colors.success : colors.textSecondary, FontWeight.w600),
+    };
+    return Text(
+      label.text,
+      style: Theme.of(context).textTheme.labelMedium?.copyWith(color: color, fontWeight: weight),
+    );
+  }
+}
+
+class _CalendarPill extends StatelessWidget {
+  const _CalendarPill({required this.added, required this.enabled, required this.onTap});
+
+  final bool added;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final scheme = Theme.of(context).colorScheme;
+    final foreground = added ? colors.success : (enabled ? scheme.onPrimaryContainer : colors.textSecondary);
+    final background = added
+        ? colors.success.withValues(alpha: 0.12)
+        : (enabled ? scheme.primaryContainer : colors.fieldFill);
+    return Semantics(
+      button: true,
+      label: added ? 'Add to calendar again' : 'Add to calendar',
+      child: Material(
+        color: background,
+        shape: const StadiumBorder(),
+        child: InkWell(
+          customBorder: const StadiumBorder(),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  transitionBuilder: (child, animation) => ScaleTransition(scale: animation, child: child),
+                  child: Icon(
+                    added ? Icons.event_available_rounded : Icons.calendar_today_rounded,
+                    key: ValueKey(added),
+                    size: 14,
+                    color: foreground,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  added ? 'In Calendar' : 'Add to Calendar',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(color: foreground),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _SwipeBackground extends StatelessWidget {
@@ -217,20 +330,44 @@ class _SwipeBackground extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final leading = alignment == Alignment.centerLeft;
+    final style = Theme.of(context).textTheme.labelLarge?.copyWith(color: foreground);
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
       padding: const EdgeInsets.symmetric(horizontal: 24),
       alignment: alignment,
-      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(color: color, borderRadius: AppRadius.cardAll),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (!leading) Text(label, style: TextStyle(color: foreground)),
+          if (!leading) Text(label, style: style),
           if (!leading) const SizedBox(width: 8),
           Icon(icon, color: foreground),
           if (leading) const SizedBox(width: 8),
-          if (leading) Text(label, style: TextStyle(color: foreground)),
+          if (leading) Text(label, style: style),
         ],
+      ),
+    );
+  }
+}
+
+/// Soft rounded course tag, tinted from the course's color slot.
+class CoursePill extends StatelessWidget {
+  const CoursePill({super.key, required this.code, required this.colorIndex});
+
+  final String code;
+  final int colorIndex;
+
+  @override
+  Widget build(BuildContext context) {
+    final pill = coursePillColors(colorIndex, Theme.of(context).brightness);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+      decoration: BoxDecoration(color: pill.background, borderRadius: BorderRadius.circular(999)),
+      child: Text(
+        code.toUpperCase(),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: pill.foreground),
       ),
     );
   }
@@ -243,39 +380,13 @@ class PriorityBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final style = priorityStyle(priority, Theme.of(context).colorScheme);
+    final style = priorityStyle(priority, context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: style.background,
-        borderRadius: BorderRadius.circular(12),
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+      decoration: BoxDecoration(color: style.background, borderRadius: BorderRadius.circular(999)),
       child: Text(
-        style.label,
+        style.label.toUpperCase(),
         style: Theme.of(context).textTheme.labelSmall?.copyWith(color: style.foreground),
-      ),
-    );
-  }
-}
-
-class CourseBadge extends StatelessWidget {
-  const CourseBadge({super.key, required this.code, required this.color});
-
-  final String code;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: color.withValues(alpha: 0.6)),
-      ),
-      child: Text(
-        code,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: color),
       ),
     );
   }

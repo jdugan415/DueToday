@@ -20,7 +20,6 @@ dependencies:
   share_plus: ^13.3.1
   animations: ^3.0.0
   file_picker: ^13.3.0
-
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -28,3 +27,21 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/fonts/OFL.txt
+  # Plus Jakarta Sans (SIL OFL 1.1), the static instances Google Fonts serves.
+  # Bundled as a regular family so every FontWeight maps to a real file and
+  # the app never fetches fonts at runtime.
+  fonts:
+    - family: PlusJakartaSans
+      fonts:
+        - asset: assets/fonts/PlusJakartaSans-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/PlusJakartaSans-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/PlusJakartaSans-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/PlusJakartaSans-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/PlusJakartaSans-ExtraBold.ttf
+          weight: 800

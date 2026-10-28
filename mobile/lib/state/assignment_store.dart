@@ -4,7 +4,7 @@ import '../models/assignment.dart';
 import '../models/course.dart';
 import '../models/dashboard_buckets.dart';
 import '../services/storage_service.dart';
-import '../theme.dart';
+import '../theme/app_theme.dart';
 
 /// App-wide state: every assignment and course on this device. Every
 /// mutation is written through to [StorageService] immediately, so the app
@@ -44,7 +44,7 @@ class AssignmentStore extends ChangeNotifier {
   Future<void> addAll(Course course, List<Assignment> items) async {
     final existing = _courses[course.code];
     _courses[course.code] = existing == null
-        ? course.copyWith(colorIndex: _courses.length % courseColors.length)
+        ? course.copyWith(colorIndex: courseColorIndexFor(course.code))
         : existing.copyWith(name: course.name, shareCode: course.shareCode);
 
     final incoming = {for (final item in items) item.id: item.copyWith(courseCode: course.code)};
