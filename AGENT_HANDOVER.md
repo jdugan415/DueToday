@@ -5,6 +5,7 @@
 - **Project:** DueToday, a mobile syllabus parser, priority assignment tracker, and zero-permission calendar sync for college students.
 - **Timeline:** 4-week senior capstone, 4 people (bootstrap landed 2026-10-27).
 - **Repo layout:** `backend/` (FastAPI), `mobile/` (Flutter, Android), `.github/workflows/build.yml` (CI).
+- **Current priority:** getting onto Google Play. The critical path, owners, and every remaining launch task are in **§7 Google Play launch checklist**. Start there.
 
 ---
 
@@ -113,8 +114,9 @@ Add a pytest case to `backend/test_parser.py` for every parser change or bug rep
 | Item | Owner | Detail |
 | --- | --- | --- |
 | End-to-end run on a device | anyone | Boot the backend, `flutter run` on an emulator, and walk paste → staging → dashboard → calendar → share/import. File bugs for anything broken. |
-| Play signing & upload | Agent 1 | CI signs with the debug key until secrets exist. |
-| Backend deployment | Agent 1 | No `render.yaml` / `fly.toml` yet. Set `vars.API_BASE_URL` in GitHub once deployed. Until then, release builds point at `http://10.0.2.2:8000` (emulator only). |
+| Play signing & upload | Agent 1 + Jack | CI signs with the debug key until secrets exist. See §7 B3, C1. |
+| Backend deployment | Agent 1 + Jack | Not deployed. Release builds point at `http://10.0.2.2:8000` (emulator only), so parsing and class codes fail on real phones. See §7 B1–B2. |
+| Play Console account, testers, store listing | Jack + team | Not started. See §7 Phases A–D for the full launch checklist. |
 | Rate limits across instances | Agent 2 | Limits are in-memory per process: fine on one free instance, but not shared if the API scales out. |
 | Store listing assets | Agent 3 | Screenshots, feature graphic (1024×500), 512×512 icon PNG for the Play listing. The UI redesign (2026-10-27) is done, so screenshots can be taken now in light and dark mode. |
 | Scanned-PDF OCR | stretch | Image-only PDFs return the "copy and paste" message. OCR (e.g. Tesseract on the server, or on-device ML Kit text recognition) would need either a bigger server image or a new plugin; check its manifest against the zero-permission rule first. |
@@ -346,13 +348,13 @@ flutter build appbundle --release             # → build/app/outputs/bundle/rel
 Each agent works on its own branch (§6). Coordinate through PRs; don't edit another area's files without tagging its owner.
 
 ### Agent 1: DevOps
-Owns: `.github/`, `mobile/android/app/build.gradle.kts` (signing), deployment config.
+Owns: `.github/`, `mobile/android/app/build.gradle.kts` (signing), deployment config. **The Google Play launch is the critical path. Work through §7 in order; the steps below are the DevOps details behind it.**
 1. Generate an upload keystore (`keytool -genkey -v -keystore upload-keystore.jks -keyalg RSA -keysize 2048 -validity 10000 -alias upload`). **Never commit it.**
 2. Add repo secrets: `ANDROID_KEYSTORE_BASE64` (`base64 -w0 upload-keystore.jks`), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. CI already consumes them (step "Configure release signing").
 3. Deploy the backend (Render web service from `backend/Dockerfile`, or `fly launch`), connect Supabase with `DATABASE_URL`, then set the repo **variable** `API_BASE_URL` to the HTTPS URL.
 4. Create the Play Console app (`com.duetoday.app`), enroll in Play App Signing, and upload the first CI `.aab` to the **Internal testing** track. Add the team as testers.
 5. Optional: add a job that uploads to the internal track automatically on `main` (e.g. `r0adkll/upload-google-play` with a service-account JSON secret).
-6. Data safety form: no data collected on device; share codes send course/assignment titles to our server.
+6. Data safety form: see §7 B7. Syllabus text and PDFs are sent to the server for parsing (processed only to extract dates, not kept); shared courses are stored on the server; nothing else leaves the device.
 
 ### Agent 2: Backend
 Owns: `backend/`.
@@ -396,3 +398,56 @@ Owns: `mobile/lib/services/export_service.dart` and its UI entry points (coordin
   - Contract changes (§3) or new Android dependencies call this out at the top of the PR description.
 - **Never commit:** keystores (`*.jks`, `*.keystore`), `key.properties`, `.env`, real `DATABASE_URL`s, `*.db` files, `build/` output. `.gitignore` covers these; double-check `git status` before committing.
 - **Agents specifically:** before starting, `git pull` `main`, re-read this file, and run both test suites. Before opening a PR, run `pytest -q` (backend) and `flutter analyze && flutter test` (mobile), and update §2 "Current system state" to reflect what you finished.
+
+---
+
+## 7. Google Play launch checklist
+
+**Goal:** public on Google Play around **mid-to-late November 2026**. The long pole isn't code: new *personal* Play developer accounts must run a **closed test with at least 12 testers opted in for 14 days in a row** before they can apply for production. Every task that can run in parallel with that clock should.
+
+Legend: 🧑 = a person must do it (accounts, payment, ID verification, legal agreements, real devices); agents **must not** create accounts, enter passwords or payment details, or accept agreements, but they prepare files and step-by-step instructions. 🤖 = an agent can do it end to end. ⬜ = not started, ✅ = done. **Update the Status column as tasks finish.**
+
+### Constraints to plan around
+- **Android only.** There is no iOS build. iPhone users can't install the app, and **can't count toward the 12 testers**.
+- **Jack (account owner) has no Android phone.** Google asks new personal accounts to verify access to a real Android device by signing in to the **Play Console app** on one. **Borrow a teammate's Android phone** for that step (sign out afterwards). Check Play Console's current instructions when you get there; Google changes them from time to time.
+- **The app needs a public HTTPS backend.** Release builds currently point at `http://10.0.2.2:8000` (the emulator's alias for the dev machine). On a real phone, local features work (dashboard, editing, calendar, export), but **parsing (paste and PDF) and class codes fail** until B1–B2 below are done.
+- **`com.duetoday.app` is permanent** once the first build is uploaded. Change it in `mobile/android/app/build.gradle.kts` (`namespace` + `applicationId`) and the Kotlin package *before* the first upload if the team wants a different ID.
+
+### Phase A: start now (no code needed)
+| # | Task | Owner | Status |
+| --- | --- | --- | --- |
+| A1 | **Create the Play Console developer account**: play.google.com/console → **Personal** account (an Organization account skips the 12-tester rule but needs a D-U-N-S number, which takes weeks) → pay **$25** once → identity verification with a government ID (hours to a few days). Use a Google account the team will still have after graduation. The developer name is public on the listing. | 🧑 Jack | ⬜ |
+| A2 | **Device verification for A1**: install the Play Console app on a teammate's Android phone, sign in as the developer account, complete the check, sign out. | 🧑 Jack + a teammate with Android | ⬜ |
+| A3 | **Recruit at least 12 Android testers** (aim for 15–20; people drop out). Collect the Gmail address each uses on their phone. Teammates with Android count. A Google Group makes the tester list easy to manage in Play Console. Testers must **opt in via the link and install**, then keep it installed for 14 days. | 🧑 whole team | ⬜ |
+| A4 | **Find at least one real Android phone** for pre-launch testing (haptics, Samsung/Google calendar intents, performance). A teammate's phone is fine. | 🧑 team | ⬜ |
+
+### Phase B: this week (make a release-quality build)
+| # | Task | Owner | Status |
+| --- | --- | --- | --- |
+| B1 | **Deploy the backend to Render + Supabase.** 🤖 adds `render.yaml` (Docker service from `backend/Dockerfile`, health check `/health`, `alembic upgrade head` on start, env var placeholders). 🧑 creates a free **Supabase** project → Project settings → Connect → copies the **Transaction pooler** URI; creates a free **Render** account with GitHub login → New → Blueprint → picks this repo → pastes the URI as `DATABASE_URL`. 🤖 then smoke-tests parse, PDF upload, share codes, and `.ics` against the live URL. Free tier sleeps after about 15 min idle (first request takes 30–50 s; the app allows 60 s). Consider the $7/mo plan before public launch. | 🤖 + 🧑 (sign-ups) | ⬜ |
+| B2 | **Point builds at the live server**: set the GitHub repo *variable* `API_BASE_URL` to the Render HTTPS URL (`gh variable set API_BASE_URL --body https://…`). CI already passes it as `--dart-define`. | 🤖 | ⬜ |
+| B3 | **Release signing**: generate the upload keystore (`keytool -genkey -v -keystore upload-keystore.jks -keyalg RSA -keysize 2048 -validity 10000 -alias upload`), store the keystore file **and** both passwords in the team's password manager plus an offline backup, and add the 4 repo secrets listed in §5 Agent 1. **Never commit the keystore.** With Play App Signing a lost upload key can be reset, but it's slow. | 🧑 runs `keytool` and holds the passwords; 🤖 sets up secrets and verifies a signed CI build | ⬜ |
+| B4 | **Privacy policy page** (required: the app sends syllabus text to our server). 🤖 drafts it and hosts it with GitHub Pages from `/docs`. It must say: syllabus text and PDFs are sent to the DueToday server only to extract dates and are not kept after the request (large uploads touch a temporary file that is deleted when the request ends); **shared courses** (course code/name, assignment titles, dates, weights, notes) are stored on the server under a public 5-character code; assignments otherwise live only on the device; no accounts, analytics, ads, or third-party tracking; HTTPS in transit; a contact email for deletion requests. 🧑 reviews it and supplies the contact email. | 🤖 + 🧑 review | ⬜ |
+| B5 | **App icon and store graphics**: 512×512 icon PNG (also replace the placeholder vector launcher icon), 1024×500 feature graphic, 4–8 phone screenshots (dashboard, review, PDF upload, share sheet; light and dark). The UI is final as of 2026-10-27, so screenshots can be taken on the emulator now. | 🤖 drafts, 🧑 approves | ⬜ |
+| B6 | **Store listing text**: app name (≤ 30 chars), short description (≤ 80), full description (≤ 4000), category *Productivity*, contact email. | 🤖 drafts, 🧑 approves | ⬜ |
+| B7 | **Play Console forms** (answers drafted by 🤖, submitted by 🧑): **Data safety** (user-provided content is sent to our server: processed ephemerally for parsing, stored only when a user shares a course, encrypted in transit, not sold or used for ads), **Content rating** questionnaire (utility/productivity, no objectionable content), **Target audience** 13+ (stay out of the under-13 Families program), **Ads**: none, **App access**: no login required. | 🤖 + 🧑 | ⬜ |
+| B8 | **Real-device check** on the phone from A4: full flow against the live server (paste, PDF, review, calendar, share/import, export). File bugs as GitHub issues. | 🧑 + 🤖 fixes | ⬜ |
+
+### Phase C: testing tracks (needs A1 + B1–B3)
+| # | Task | Owner | Status |
+| --- | --- | --- | --- |
+| C1 | Create the app in Play Console, enroll in **Play App Signing**, upload the signed `.aab` from CI to **Internal testing**, add the team. Internal builds are available within hours, so use this track for fast team checks. | 🧑 (Console UI) + 🤖 (build) | ⬜ |
+| C2 | Promote the build to **Closed testing**, add the testers from A3, share the opt-in link. **The 14-day clock starts once 12 testers have opted in.** Track the date here. | 🧑 | ⬜ |
+| C3 | During the 14 days: fix reported bugs and ship updates (bump `version:` in `mobile/pubspec.yaml`; CI sets the build number automatically). Keep notes on tester feedback, because the production-access application asks about it. | 🤖 + 🧑 | ⬜ |
+| C4 | Optional: automate uploads to the internal track on merges to `main` (e.g. `r0adkll/upload-google-play` with a service-account JSON secret). | 🤖 | ⬜ |
+
+### Phase D: production (after the 14 days)
+| # | Task | Owner | Status |
+| --- | --- | --- | --- |
+| D1 | **Apply for production access** in Play Console (questions about the closed test and feedback). Review takes a few days. | 🧑 | ⬜ |
+| D2 | Create the production release with a staged rollout (e.g. 20%), watch Play Console's crash and ANR reports, then go to 100%. | 🧑 + 🤖 | ⬜ |
+
+### Getting the app onto a phone *without* Play (demos, quick tests)
+- **USB, using the dev machine's backend (no deployment needed):** enable Developer options + USB debugging on the phone, plug in, run `adb reverse tcp:8000 tcp:8000`, then `flutter run --release --dart-define=API_BASE_URL=http://localhost:8000` from `mobile/`.
+- **Sideloaded APK (needs B1):** `flutter build apk --release --dart-define=API_BASE_URL=https://…`, send `build/app/outputs/flutter-apk/app-release.apk`, and allow "Install unknown apps" on the phone. Google has announced developer verification for sideloaded apps (rolling out by country from late 2026); a verified Play account covers that.
+- **iPhone users:** not supported. A Flutter **web build** could serve as an iPhone-friendly demo, but calendar intents and file sharing behave differently in a browser, and it isn't an installable app. A real iOS app (Mac or cloud build service, $99/yr Apple account, App Store review) is out of scope for this capstone.
