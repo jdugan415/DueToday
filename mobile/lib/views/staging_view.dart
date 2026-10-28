@@ -23,12 +23,33 @@ class _StagingViewState extends State<StagingView> {
   final _nameController = TextEditingController();
   late List<Assignment> _items;
 
+  /// Items already due when the screen opened. Fixed at open time so editing
+  /// a date doesn't make an item vanish mid-review.
+  late final Set<String> _pastIds;
+
+  /// Mid-semester imports would otherwise flood Overdue with work the student
+  /// already finished, so past items are left out unless the user opts in.
+  late bool _includePast;
+
   @override
   void initState() {
     super.initState();
     _codeController = TextEditingController(text: widget.result.courseCode);
     _items = List.of(widget.result.assignments);
+    final now = context.read<AssignmentStore>().now();
+    _pastIds = {
+      for (final a in _items)
+        if (a.dueAt != null && a.dueAt!.isBefore(now)) a.id,
+    };
+    // An old syllabus with nothing upcoming: hiding everything would be confusing.
+    _includePast = _items.every((a) => _pastIds.contains(a.id));
   }
+
+  /// What's shown and what Save stores.
+  List<Assignment> get _visible =>
+      _includePast ? _items : _items.where((a) => !_pastIds.contains(a.id)).toList();
+
+  int get _hiddenPastCount => _items.where((a) => _pastIds.contains(a.id)).length;
 
   @override
   void dispose() {
@@ -85,7 +106,7 @@ class _StagingViewState extends State<StagingView> {
     final navigator = Navigator.of(context);
     await context.read<AssignmentStore>().addAll(
           Course(code: code, name: name.isEmpty ? null : name),
-          _items.where((a) => a.title.trim().isNotEmpty).toList(),
+          _visible.where((a) => a.title.trim().isNotEmpty).toList(),
         );
     navigator.popUntil((route) => route.isFirst);
   }
@@ -94,8 +115,10 @@ class _StagingViewState extends State<StagingView> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final warnings = widget.result.warnings;
+    final visible = _visible;
+    final pastCount = _hiddenPastCount;
     return Scaffold(
-      appBar: AppBar(title: Text('Review ${_items.length} items')),
+      appBar: AppBar(title: Text('Review ${visible.length} items')),
       body: ListView(
         padding: const EdgeInsets.only(bottom: 96),
         children: [
@@ -128,12 +151,33 @@ class _StagingViewState extends State<StagingView> {
               leading: Icon(Icons.info_outline, color: theme.colorScheme.tertiary),
               title: Text(warning),
             ),
-          if (_items.isEmpty)
+          if (pastCount > 0)
+            Card(
+              margin: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              elevation: 0,
+              color: theme.colorScheme.secondaryContainer,
+              child: SwitchListTile(
+                secondary: Icon(Icons.history, color: theme.colorScheme.onSecondaryContainer),
+                title: Text(
+                  '$pastCount ${pastCount == 1 ? 'item is' : 'items are'} already past due',
+                  style: TextStyle(color: theme.colorScheme.onSecondaryContainer),
+                ),
+                subtitle: Text(
+                  _includePast
+                      ? 'They will be saved and show up as Overdue.'
+                      : 'Left out so they don\'t fill up Overdue.',
+                  style: TextStyle(color: theme.colorScheme.onSecondaryContainer),
+                ),
+                value: _includePast,
+                onChanged: (value) => setState(() => _includePast = value),
+              ),
+            ),
+          if (visible.isEmpty)
             const Padding(
               padding: EdgeInsets.all(32),
               child: Text('Nothing left to save.', textAlign: TextAlign.center),
             ),
-          for (final item in _items)
+          for (final item in visible)
             Dismissible(
               key: ValueKey(item.id),
               direction: DismissDirection.endToStart,
@@ -146,6 +190,7 @@ class _StagingViewState extends State<StagingView> {
               onDismissed: (_) => setState(() => _items.removeWhere((a) => a.id == item.id)),
               child: _StagingTile(
                 item: item,
+                isPast: _pastIds.contains(item.id),
                 onTitleChanged: (title) => _replace(item.copyWith(title: title)),
                 onPickDate: () => _pickDate(item),
                 onPickTime: () => _pickTime(item),
@@ -154,9 +199,9 @@ class _StagingViewState extends State<StagingView> {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _items.isEmpty ? null : _save,
+        onPressed: visible.isEmpty ? null : _save,
         icon: const Icon(Icons.check),
-        label: Text('Save ${_items.length}'),
+        label: Text('Save ${visible.length}'),
       ),
     );
   }
@@ -165,12 +210,14 @@ class _StagingViewState extends State<StagingView> {
 class _StagingTile extends StatelessWidget {
   const _StagingTile({
     required this.item,
+    required this.isPast,
     required this.onTitleChanged,
     required this.onPickDate,
     required this.onPickTime,
   });
 
   final Assignment item;
+  final bool isPast;
   final ValueChanged<String> onTitleChanged;
   final VoidCallback onPickDate;
   final VoidCallback onPickTime;
@@ -214,6 +261,14 @@ class _StagingTile extends StatelessWidget {
                     label: Text(item.timeSpecified ? 'Change time' : 'Default 11:59 PM'),
                   ),
                 const Spacer(),
+                if (isPast)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Text(
+                      'Past due',
+                      style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.error),
+                    ),
+                  ),
                 if (item.needsReview)
                   Tooltip(
                     message: item.sourceLine ?? 'Please double-check this item',

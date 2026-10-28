@@ -65,9 +65,7 @@ class ApiService {
     String? courseCode,
     DateTime? today,
   }) async {
-    final requestedCode = courseCode == null || courseCode.trim().isEmpty
-        ? null
-        : Course.normalizeCode(courseCode);
+    final requestedCode = _normalizedCode(courseCode);
     final body = await _send(() => _client.post(
           _uri('/api/parse'),
           headers: _jsonHeaders,
@@ -78,6 +76,50 @@ class ApiService {
           }),
         ));
 
+    return _toParseResult(body, requestedCode);
+  }
+
+  /// Largest upload `POST /api/parse-pdf` accepts (mirrors MAX_PDF_BYTES).
+  static const int maxPdfBytes = 10 * 1024 * 1024;
+
+  /// Uploads can be slow on campus Wi-Fi on top of a cold start.
+  static const Duration pdfTimeout = Duration(seconds: 120);
+
+  /// `POST /api/parse-pdf` (multipart). The server extracts the PDF's text
+  /// and returns exactly what [parseSyllabus] returns for pasted text.
+  /// Scanned or password-protected PDFs throw an [ApiException] whose message
+  /// tells the user to paste the text instead.
+  Future<ParseResult> parseSyllabusPdf({
+    required List<int> bytes,
+    required String filename,
+    String? courseCode,
+    DateTime? today,
+  }) async {
+    if (bytes.length > maxPdfBytes) {
+      throw const ApiException('That PDF is larger than 10 MB. Try exporting just the schedule pages.');
+    }
+    final requestedCode = _normalizedCode(courseCode);
+    final request = http.MultipartRequest('POST', _uri('/api/parse-pdf'))
+      ..headers['Accept'] = 'application/json'
+      ..fields['reference_date'] = DateFormat('yyyy-MM-dd').format(today ?? DateTime.now())
+      ..files.add(http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: filename.toLowerCase().endsWith('.pdf') ? filename : '$filename.pdf',
+      ));
+    if (requestedCode != null) request.fields['course_code'] = requestedCode;
+
+    final body = await _send(
+      () async => http.Response.fromStream(await _client.send(request)),
+      timeout: pdfTimeout,
+    );
+    return _toParseResult(body, requestedCode);
+  }
+
+  static String? _normalizedCode(String? raw) =>
+      raw == null || raw.trim().isEmpty ? null : Course.normalizeCode(raw);
+
+  static ParseResult _toParseResult(Map<String, dynamic> body, String? requestedCode) {
     final code = body['course_code'] as String? ?? requestedCode ?? fallbackCourseCode;
     final tasks = (body['tasks'] as List).cast<Map<String, dynamic>>();
     return ParseResult(
@@ -133,7 +175,10 @@ class ApiService {
     'Accept': 'application/json',
   };
 
-  Future<Map<String, dynamic>> _send(Future<http.Response> Function() request) async {
+  Future<Map<String, dynamic>> _send(
+    Future<http.Response> Function() request, {
+    Duration timeout = ApiService.timeout,
+  }) async {
     final http.Response response;
     try {
       response = await request().timeout(timeout);
@@ -154,7 +199,9 @@ class ApiService {
     final detail = decoded is Map ? decoded['detail'] : null;
     if (detail is String) return detail;
     if (status == 404) return 'Not found.';
+    if (status == 413) return 'That file is too large.';
     if (status == 422) return 'The server rejected that input.';
+    if (status == 429) return 'Too many requests. Please wait a moment and try again.';
     return 'Server error ($status).';
   }
 }

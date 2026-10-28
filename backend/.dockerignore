@@ -3,3 +3,6 @@ __pycache__
 .pytest_cache
 *.db
 test_*.py
+conftest.py
+pdf_fixtures.py
+migrations/__pycache__

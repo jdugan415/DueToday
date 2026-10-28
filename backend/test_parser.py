@@ -142,6 +142,19 @@ def test_titles(text, title, task_type):
 
 
 @pytest.mark.parametrize(
+    ("text", "title"),
+    [
+        ("Sept 16      Sorting      Quiz 1 (10 pts)", "Quiz 1"),
+        ("Oct 9\tGraph Search\tProject 2 Proposal", "Project 2 Proposal"),
+        ("Oct 9   Linked Lists   Lab 3", "Lab 3"),
+        ("Sept 16 Sorting Quiz 1", "Sorting Quiz 1"),  # single spaces: still one cell
+    ],
+)
+def test_table_cells_do_not_leak_into_titles(text, title):
+    assert only_task(text).title == title
+
+
+@pytest.mark.parametrize(
     "text",
     [
         "No class - Labor Day 9/7",
@@ -156,6 +169,77 @@ def test_titles(text, title, task_type):
 )
 def test_non_deliverables_are_skipped(text):
     assert parse(text).tasks == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Policy prose found in real syllabi: none of these are deliverables.
+        "Homework assignments should be submitted through Moodle by the deadline.",
+        "The final examination accounts for 35% of the final course grade.",
+        "Each homework assignment contributes approximately 2% to the course grade.",
+        "Quizzes will assess students' understanding of recently covered material.",
+        "Final date to drop courses without receiving a grade of W is Sept 2.",
+        "Final course grade will be determined according to the following distribution.",
+        "Late work on quiz, laboratory, and exam scores is not accepted after Dec 7.",
+        "Group project announced and requirements discussed on Sept 17.",
+        "Programming Assignment Policy",
+        "Assignment dates and topics may be adjusted as needed.",
+        "Labs and quizzes together account for 15%.",
+        "Students should consult the University final examination schedule for Dec 7.",
+    ],
+)
+def test_syllabus_prose_is_not_a_task(text):
+    assert parse(text).tasks == []
+
+
+def test_wrapped_prose_verb_is_still_prose():
+    # PDF extraction can wrap "accounts / for" onto two lines.
+    assert parse("The midterm examination accounts\nfor 25% of the grade.").tasks == []
+
+
+@pytest.mark.parametrize(
+    ("text", "title"),
+    [
+        ("Dec 9   Final", "Final"),
+        ("Final (35%) Dec 9", "Final"),
+        ("Dec 9 Final Examination", "Final Examination"),
+        ("Dec 1 Final Presentation", "Final Presentation"),
+        ("Midterm examination will be held on Oct 15", "Midterm examination will be held"),
+    ],
+)
+def test_real_final_and_midterm_forms_are_kept(text, title):
+    assert only_task(text).title == title
+
+
+def test_grading_table_weight_merges_into_schedule_item():
+    text = """Grading
+    Group Project        15%
+    Midterm Examination  25%
+    Final Examination    35%
+
+    Schedule
+    Oct 15   Midterm Examination
+    Dec 7    Final Examination
+    """
+    by_title = {t.title: t for t in parse(text).tasks}
+    assert by_title["Midterm Examination"].due_date == date(2026, 10, 15)
+    assert by_title["Midterm Examination"].weight_percent == 25
+    assert by_title["Final Examination"].weight_percent == 35
+    # No dated twin: kept undated so the user can set a date in review.
+    assert by_title["Group Project"].due_date is None
+    assert len(by_title) == 3
+
+
+def test_sentence_duplicate_of_a_dated_item_is_dropped():
+    text = "Oct 15 9:00 AM   Midterm Exam   25%\nThe midterm exam will be held on Oct 15 at 9:00 AM in Room 1200."
+    assert [t.title for t in parse(text).tasks] == ["Midterm Exam"]
+
+
+def test_headings_and_long_lines_do_not_inherit_dates():
+    text = "Dec 7   Final Exam\nHomework\nProject using a real-world dataset to apply clustering methods\nLab 6"
+    by_title = {t.title: t.due_date for t in parse(text).tasks}
+    assert by_title == {"Final Exam": date(2026, 12, 7), "Lab 6": date(2026, 12, 7)}
 
 
 def test_empty_result_warns():

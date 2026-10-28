@@ -4,6 +4,8 @@ pydantic>=2.9,<3.0
 sqlalchemy>=2.0.36,<2.1
 psycopg[binary]>=3.2,<4.0
 alembic>=1.13,<2.0
+pypdf>=6.0,<7.0
+python-multipart>=0.0.9
 
 # Test-only
 pytest>=8.3

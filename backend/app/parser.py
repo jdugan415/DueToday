@@ -79,7 +79,8 @@ _POINTS_RE = re.compile(r"(?<![\d.])(?P<value>\d{1,4})\s*(?:pts?|points?)\b\.?",
 
 # --- tasks -----------------------------------------------------------------
 _TASK_RE = re.compile(
-    r"\b(?P<kw>final\s+exams?|final\s+projects?|midterm\s+exams?|midterms?|finals?|exams?|"
+    r"\b(?P<kw>final\s+exam(?:ination)?s?|final\s+projects?|final\s+presentations?|final\s+reports?|"
+    r"final\s+papers?|midterm\s+exam(?:ination)?s?|midterms?|finals?|exam(?:ination)?s?|"
     r"homeworks?|hw|quiz(?:zes)?|projects?|labs?|discussions?|essays?|assignments?|presentations?)"
     r"(?![a-z])",
     re.IGNORECASE,
@@ -88,14 +89,43 @@ _TASK_RE = re.compile(
 # "Exam 1 review", "HW 3 assigned", "Midterm grades posted".
 _SKIP_AFTER_RE = re.compile(
     r"\s*(?:#?\d+[a-z]?\s*)?(?:review|solutions?|sessions?|grades?|returned|key|prep|help|overview|"
-    r"feedback|assigned|released|posted|available|handed\s+out|out(?!\s+of))\b",
+    r"feedback|assigned|released|posted|available|handed\s+out|announced|out(?!\s+of))\b",
     re.IGNORECASE,
 )
+# Full syllabi are mostly policy prose ("Homework assignments should be
+# submitted...", "The final examination accounts for 35%"). A keyword followed
+# within two words by one of these is part of a sentence, not a deliverable.
+# Scheduling phrases ("will be held", "will take place") are still deliverables.
+_PROSE_AFTER_RE = re.compile(
+    r"\s*(?:[^\s,;:.()]+\s+){0,2}?"
+    r"(?:accounts?|contributes?|counts?\s+(?:for|toward)|"
+    r"will(?!\s+(?:be\s+(?:held|given|due|on|in)|take\s+place|open|close))|should|must|may|can|cannot|"
+    r"polic(?:y|ies)|weights?|percentages?|components?|categor(?:y|ies)|instructions?|guidelines?|"
+    r"requirements?|dates|topics|assignments|grade|scores?|rubrics?|period|schedule)\b",
+    re.IGNORECASE,
+)
+# "quiz, laboratory, and exam scores": a keyword starting a lowercase list is prose.
+_PROSE_LIST_AFTER_RE = re.compile(r",\s*(?:and\s+|or\s+)?[a-z]")
+# A bare "Final" is the final exam only when nothing word-like follows it
+# ("Dec 9  Final", "Final (35%)"); "Final date to drop" or "Final course grade"
+# are not deliverables.
+_BARE_FINAL_OK_RE = re.compile(r"\s*(?:$|[(\-–—:,;|\d]|\s{2,})")
+# Context dates (from a header row above) only flow into short schedule lines.
+_MAX_CONTEXT_LINE_WORDS = 8
+# Undated items longer than this are sentence fragments, not titles.
+_MAX_UNDATED_TITLE_WORDS = 4
+# A dated title that reads like a sentence (long, or containing a verb) and
+# duplicates another item's type and due time is the sentence describing that
+# item ("Midterm exam will be held on Oct 15 at 9:00 AM").
+_MAX_TITLE_WORDS_BEFORE_SENTENCE = 5
+_SENTENCE_VERB_RE = re.compile(r"\b(?:will|is|are|was|were|be|been)\b", re.IGNORECASE)
 _SKIP_BEFORE_RE = re.compile(
     r"(?:\breview\s+(?:for|of)|\bstudy\s+for|\bprep(?:are)?\s+for|\bno)\s+(?:the\s+)?$",
     re.IGNORECASE,
 )
-_COMPOUND_BREAK_RE = re.compile(r"[,;:|()\[\]{}\t/–—]|\s-\s|\b(?:and|or|plus|due|then|also)\b", re.IGNORECASE)
+_COMPOUND_BREAK_RE = re.compile(
+    r"[,;:|()\[\]{}\t/–—]|\s-\s|\s{3,}|\b(?:and|or|plus|due|then|also)\b", re.IGNORECASE
+)
 _SKIP_LINE_RE = re.compile(
     r"\b(?:no\s+class(?:es)?|class(?:es)?\s+cancel+ed|holiday|spring\s+break|fall\s+break|"
     r"thanksgiving|office\s+hours|reading\s+day)\b",
@@ -115,7 +145,9 @@ _TITLE_STOP_RE = re.compile(
 _TRAILING_JUNK_RE = re.compile(
     r"(?:[\s,:;.\-–—&/]+|\s+(?:and|or|plus|also|is|are|on|at|by|the|due)\b)+$", re.IGNORECASE
 )
-_PREFIX_CUT_RE = re.compile(r"[:;|()\[\]{}\t,–—]|\s-\s|\bdue\b", re.IGNORECASE)
+# Tabs and runs of 3+ spaces are table-cell boundaries (PDF layout extraction,
+# text copied out of tables): a title never borrows words from the previous cell.
+_PREFIX_CUT_RE = re.compile(r"[:;|()\[\]{}\t,–—]|\s-\s|\s{3,}|\bdue\b", re.IGNORECASE)
 _PREFIX_WORD_RE = re.compile(r"[A-Z][A-Za-z'&+/-]*|\d{1,2}[A-Za-z]?")
 _PREFIX_BLOCKLIST = {
     "due", "by", "on", "the", "and", "or", "also", "week", "today", "tomorrow", "tonight",
@@ -200,6 +232,7 @@ def parse_syllabus(
         if not line or _SKIP_LINE_RE.search(line):
             continue
         drafts.extend(_parse_line(line, reference, context))
+    drafts = _consolidate(drafts)
 
     tasks: list[ParsedTask] = []
     warnings: list[str] = []
@@ -248,6 +281,52 @@ def parse_syllabus(
         tasks=tasks,
         warnings=warnings,
     )
+
+
+def _consolidate(drafts: list[_Draft]) -> list[_Draft]:
+    """Merge and prune undated drafts.
+
+    Syllabi mention each deliverable twice: once in the grading table
+    ("Final Examination  35%", undated) and once in the schedule (dated). The
+    undated twin's weight/points move onto the dated item and the twin is
+    dropped. Remaining undated drafts are kept only if they look like a title:
+    not a bare keyword heading ("Homework") and not a sentence fragment.
+    """
+    dated: dict[str, _Draft] = {}
+    for draft in drafts:
+        if draft.due_date is not None:
+            dated.setdefault(_title_key(draft.title), draft)
+
+    # (type, date, time) slots held by a title-like item, so a sentence-style
+    # duplicate of the same item can be dropped.
+    short_slots = {
+        (d.task_type, d.due_date, d.due_time)
+        for d in drafts
+        if d.due_date is not None and not _reads_like_sentence(d.title)
+    }
+
+    kept: list[_Draft] = []
+    for draft in drafts:
+        if draft.due_date is None:
+            twin = dated.get(_title_key(draft.title))
+            if twin is not None:
+                twin.weight_percent = twin.weight_percent if twin.weight_percent is not None else draft.weight_percent
+                twin.points = twin.points if twin.points is not None else draft.points
+                continue
+            if _TASK_RE.fullmatch(draft.title) or len(draft.title.split()) > _MAX_UNDATED_TITLE_WORDS:
+                continue
+        elif _reads_like_sentence(draft.title) and (draft.task_type, draft.due_date, draft.due_time) in short_slots:
+            continue
+        kept.append(draft)
+    return kept
+
+
+def _reads_like_sentence(title: str) -> bool:
+    return len(title.split()) > _MAX_TITLE_WORDS_BEFORE_SENTENCE or bool(_SENTENCE_VERB_RE.search(title))
+
+
+def _title_key(title: str) -> str:
+    return " ".join(title.lower().split())
 
 
 def compute_priority(task_type: str, weight_percent: float | None, points: int | None) -> str:
@@ -352,19 +431,19 @@ def _build_drafts(
         seg_end = prefixes[i + 1][1] if i + 1 < len(matches) else len(line)
         prev_start = matches[i - 1].end() if i else 0
 
+        title = _build_title(line, prefixes[i][0], kw_start, kw_end, seg_end, spans)
+        weight = _pick_measure(measures, "percent", kw_start, seg_end, single)
+        points = _pick_measure(measures, "points", kw_start, seg_end, single)
+
         hit, source = _pick_date(line, dates, kw_start, seg_end, prev_start, leading)
         confidence = {"due": 1.0, "primary": 1.0, "secondary": 0.9, "line": 0.85}.get(source, 0.3)
         due_date = hit.value if hit else None
         if hit and hit.relative:
             confidence -= 0.2
-        if hit is None and context.due is not None:
+        if hit is None and context.due is not None and _may_inherit_context(line, measures, title, match):
             due_date, confidence = context.due, 0.7
 
         due_time = _pick_time(times, kw_start, seg_end, prev_start, leading, single)
-        weight = _pick_measure(measures, "percent", kw_start, seg_end, single)
-        points = _pick_measure(measures, "points", kw_start, seg_end, single)
-
-        title = _build_title(line, prefixes[i][0], kw_start, kw_end, seg_end, spans)
         drafts.append(
             _Draft(
                 title=title,
@@ -381,9 +460,39 @@ def _build_drafts(
 
 
 def _is_announcement(line: str, match: re.Match[str]) -> bool:
-    if _SKIP_AFTER_RE.match(line, match.end()):
+    """True when a keyword match is not a deliverable (announcement, category, prose)."""
+    keyword = " ".join(match.group("kw").lower().split())
+    # Deliverables are singular ("Quiz 3"); "Quizzes" / "Labs" name categories.
+    if keyword.endswith("s") and keyword != "hw":
+        return True
+    if keyword == "final" and not _BARE_FINAL_OK_RE.match(line, match.end()):
+        return True
+    after = match.end()
+    if _SKIP_AFTER_RE.match(line, after) or _PROSE_AFTER_RE.match(line, after):
+        return True
+    if _PROSE_LIST_AFTER_RE.match(line, after):
         return True
     return bool(_SKIP_BEFORE_RE.search(line[: match.start()]))
+
+
+def _is_bare_keyword(title: str, match: re.Match[str]) -> bool:
+    return " ".join(title.lower().split()) == " ".join(match.group("kw").lower().split())
+
+
+def _may_inherit_context(
+    line: str, measures: list[_MeasureHit], title: str, match: re.Match[str]
+) -> bool:
+    """Whether an undated task may take the date of the schedule row above it.
+
+    Only short schedule lines ("Lab 5", "Discussion post") qualify: not
+    sentences, not grading-table rows (they carry a weight), and not a bare
+    keyword that's really a section heading ("Homework").
+    """
+    return (
+        len(line.split()) <= _MAX_CONTEXT_LINE_WORDS
+        and not measures
+        and not _is_bare_keyword(title, match)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -592,6 +701,10 @@ def _task_type(keyword: str) -> str:
     kw = " ".join(keyword.lower().split())
     if kw.startswith("final project"):
         return "project"
+    if kw.startswith("final presentation"):
+        return "presentation"
+    if kw.startswith(("final report", "final paper")):
+        return "assignment"
     if kw.startswith("midterm"):
         return "midterm"
     if kw.startswith(("final", "exam")):
