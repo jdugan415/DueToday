@@ -5,8 +5,9 @@ Set DATABASE_URL to a Supabase Postgres connection string in production, e.g.
 Without it, a local SQLite file (./duetoday.db) is used so the API runs with
 zero setup.
 
-Tables are created with ``create_all`` on startup. Schema changes after the
-first deploy should go through Alembic migrations (see AGENT_HANDOVER.md).
+Schema changes go through Alembic (backend/migrations). After editing the
+models below, run ``alembic revision --autogenerate -m "..."`` and review the
+generated file. SQLite dev databases are still created with ``create_all``.
 """
 
 from __future__ import annotations
@@ -84,7 +85,15 @@ class TaskRecord(Base):
 
 
 def init_db(bind: Engine | None = None) -> None:
-    Base.metadata.create_all(bind or engine)
+    """Create tables for local SQLite databases.
+
+    Postgres is managed by Alembic (``alembic upgrade head`` runs before the
+    server starts in the Docker image); calling create_all there would create
+    tables Alembic doesn't know about and break the next migration.
+    """
+    target = bind or engine
+    if target.dialect.name == "sqlite":
+        Base.metadata.create_all(target)
 
 
 def get_db() -> Iterator[Session]:

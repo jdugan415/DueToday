@@ -119,6 +119,13 @@ class ApiService {
     );
   }
 
+  /// Public iCalendar feed for a shared course
+  /// (`GET /api/courses/{code}/calendar.ics`). Subscribing to it in Google
+  /// Calendar ("Other calendars → From URL") keeps every deadline synced
+  /// without the app holding calendar permissions.
+  String calendarFeedUrl(String shareCode) =>
+      '$baseUrl/api/courses/${shareCode.trim().toUpperCase()}/calendar.ics';
+
   void close() => _client.close();
 
   static const Map<String, String> _jsonHeaders = {

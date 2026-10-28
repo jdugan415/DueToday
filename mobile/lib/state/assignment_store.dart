@@ -66,6 +66,25 @@ class AssignmentStore extends ChangeNotifier {
     await _persist();
   }
 
+  /// Puts back an assignment removed with [remove] (the Undo action).
+  Future<void> restore(Assignment assignment) async {
+    _assignments = [..._assignments.where((a) => a.id != assignment.id), assignment];
+    await _persist();
+  }
+
+  Future<void> updateCourse(Course course) async {
+    if (!_courses.containsKey(course.code)) return;
+    _courses[course.code] = course;
+    await _persist();
+  }
+
+  /// Deletes a course and every assignment that belongs to it.
+  Future<void> removeCourse(String code) async {
+    _courses.remove(code);
+    _assignments = _assignments.where((a) => a.courseCode != code).toList();
+    await _persist();
+  }
+
   Future<void> toggleCompleted(String id) => _modify(id, (a) => a.copyWith(completed: !a.completed));
 
   Future<void> markAddedToCalendar(String id) =>

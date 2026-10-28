@@ -10,11 +10,13 @@ WORKDIR /srv
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
+COPY alembic.ini ./
+COPY migrations ./migrations
 COPY app ./app
 
 RUN useradd --create-home --uid 10001 appuser
 USER appuser
 
 EXPOSE 8000
-# Render and Fly.io inject $PORT; shell form so it expands.
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT}
+# Apply migrations, then serve. Render and Fly.io inject $PORT; shell form so it expands.
+CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips="*"

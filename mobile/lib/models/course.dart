@@ -35,9 +35,10 @@ class Course {
         'shareCode': shareCode,
       };
 
-  Course copyWith({String? name, int? colorIndex, String? shareCode}) => Course(
+  Course copyWith({String? name, int? colorIndex, String? shareCode, bool clearName = false}) =>
+      Course(
         code: code,
-        name: name ?? this.name,
+        name: clearName ? null : (name ?? this.name),
         colorIndex: colorIndex ?? this.colorIndex,
         shareCode: shareCode ?? this.shareCode,
       );

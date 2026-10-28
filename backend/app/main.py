@@ -11,14 +11,16 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from . import __version__
-from .database import create_course, get_course_by_share_code, get_db, init_db
+from .database import CourseRecord, create_course, get_course_by_share_code, get_db, init_db
+from .ics import build_calendar
 from .models import SHARE_CODE_PATTERN, CourseCreate, CourseOut, ParseRequest, ParseResponse
 from .parser import parse_syllabus
+from .ratelimit import lookup_limiter, parse_limiter, share_limiter
 
 
 @asynccontextmanager
@@ -45,7 +47,7 @@ def health() -> dict[str, str]:
     return {"status": "ok", "version": __version__}
 
 
-@app.post("/api/parse", response_model=ParseResponse)
+@app.post("/api/parse", response_model=ParseResponse, dependencies=[Depends(parse_limiter)])
 def parse(request: ParseRequest) -> ParseResponse:
     return parse_syllabus(
         request.raw_text,
@@ -55,17 +57,44 @@ def parse(request: ParseRequest) -> ParseResponse:
     )
 
 
-@app.post("/api/courses", response_model=CourseOut, status_code=status.HTTP_201_CREATED)
+@app.post(
+    "/api/courses",
+    response_model=CourseOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(share_limiter)],
+)
 def share_course(payload: CourseCreate, db: Session = Depends(get_db)) -> CourseOut:
     return CourseOut.model_validate(create_course(db, payload))
 
 
-@app.get("/api/courses/{share_code}", response_model=CourseOut)
+@app.get("/api/courses/{share_code}", response_model=CourseOut, dependencies=[Depends(lookup_limiter)])
 def import_course(share_code: str, db: Session = Depends(get_db)) -> CourseOut:
+    return CourseOut.model_validate(_find_course(db, share_code))
+
+
+@app.get(
+    "/api/courses/{share_code}/calendar.ics",
+    response_class=Response,
+    dependencies=[Depends(lookup_limiter)],
+    responses={200: {"content": {"text/calendar": {}}, "description": "iCalendar feed"}},
+)
+def course_calendar(share_code: str, db: Session = Depends(get_db)) -> Response:
+    course = _find_course(db, share_code)
+    return Response(
+        content=build_calendar(course),
+        media_type="text/calendar; charset=utf-8",
+        headers={
+            "Content-Disposition": f'inline; filename="{course.share_code}.ics"',
+            "Cache-Control": "public, max-age=900",
+        },
+    )
+
+
+def _find_course(db: Session, share_code: str) -> CourseRecord:
     code = share_code.strip().upper()
     if not re.fullmatch(SHARE_CODE_PATTERN, code):
         raise HTTPException(422, "Share codes are 5 letters/digits")
     course = get_course_by_share_code(db, code)
     if course is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"No course found for code {code}")
-    return CourseOut.model_validate(course)
+    return course

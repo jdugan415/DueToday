@@ -1,3 +1,4 @@
+import 'package:animations/animations.dart';
 import 'package:flutter/material.dart';
 
 import 'models/assignment.dart';
@@ -27,6 +28,15 @@ ThemeData buildTheme(Brightness brightness) {
       margin: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       clipBehavior: Clip.antiAlias,
     ),
+    // Material shared-axis motion for forward navigation (Paste → Review).
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: {
+        TargetPlatform.android: SharedAxisPageTransitionsBuilder(
+          transitionType: SharedAxisTransitionType.horizontal,
+        ),
+      },
+    ),
+    snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
   );
 }
 

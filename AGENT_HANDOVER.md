@@ -71,7 +71,9 @@ Add a pytest case to `backend/test_parser.py` for every parser change or bug rep
 
 ## 2. Current system state
 
-> Verified locally at bootstrap with Flutter 3.47.2 / Dart 3.13.2: `flutter analyze` reports no issues, all 13 Flutter tests pass, `flutter build appbundle --release` succeeds, and the merged release manifest holds only `INTERNET` (plus AndroidX's app-private `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`). Backend: 67 pytest cases pass. The app has **not** yet been run on an emulator or device end to end.
+> Last verified 2026-10-27 with Flutter 3.47.2 / Dart 3.13.2: `flutter analyze` reports no issues, all 21 Flutter tests pass, `flutter build appbundle --release` succeeds, and the merged release manifest holds only `INTERNET` (plus AndroidX's app-private `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`). Backend: 71 pytest cases pass. The app has **not** yet been run on an emulator or device end to end.
+>
+> **2026-10-27 update:** the Agent 2 (backend), Agent 3 (UX), and Agent 4 (export) items from §5 have been implemented. §5 now lists what is left for each.
 
 ### ✅ Implemented
 
@@ -79,20 +81,25 @@ Add a pytest case to `backend/test_parser.py` for every parser change or bug rep
 | --- | --- | --- |
 | Parse API | `backend/app/main.py`, `parser.py`, `models.py` | Full algorithm in §1. 62 parser edge-case tests. |
 | Share / import API | `main.py`, `database.py` | 5-char codes from a 31-char unambiguous alphabet (no 0/O/1/I/L). Collision retry. |
-| DB connector | `database.py` | `DATABASE_URL` → Postgres via psycopg 3 (Supabase-pooler-safe: `prepare_threshold=None`); fallback `sqlite:///./duetoday.db`. Tables via `create_all` at startup. |
-| API tests | `backend/test_api.py` | In-memory SQLite via dependency override. |
-| Docker | `backend/Dockerfile` | Python 3.12-slim, non-root, honours `$PORT`. |
+| `.ics` calendar feed | `backend/app/ics.py`, `main.py` | `GET /api/courses/{code}/calendar.ics`: RFC 5545, floating local times, escaped text, 75-octet line folding, stable UIDs, 6 h refresh hint. Undated tasks are skipped. |
+| Rate limiting | `backend/app/ratelimit.py` | In-memory sliding window per client IP → `429` + `Retry-After`. Defaults: parse 30/min, share 20/h, lookups (JSON + .ics) 60/min. Env-tunable. |
+| DB connector | `database.py` | `DATABASE_URL` → Postgres via psycopg 3 (Supabase-pooler-safe: `prepare_threshold=None`); fallback `sqlite:///./duetoday.db`. |
+| Migrations | `backend/alembic.ini`, `backend/migrations/` | Alembic baseline `0001` = current schema. The Docker image runs `alembic upgrade head` before starting. `create_all` runs only for SQLite. `test_migrations.py` fails if models and migrations drift. |
+| API tests | `backend/test_api.py`, `conftest.py` | In-memory SQLite via dependency override; rate limiters reset between tests. |
+| Docker | `backend/Dockerfile` | Python 3.12-slim, non-root, honours `$PORT`, trusts proxy headers so rate limits see real client IPs. |
 | Models | `mobile/lib/models/*.dart` | `Assignment`, `Course`, `ShareCode`, `DashboardBuckets` (Overdue / Due Today / This Week / Later / No Date / Completed). |
 | API client | `lib/services/api_service.dart` | 60 s timeout for free-tier cold starts; FastAPI `detail` surfaced as `ApiException.message`. Sends the device's date as `reference_date`. |
 | Calendar | `lib/services/calendar_service.dart` | Intent delegation as specified; `buildEvent` is unit-tested. |
 | Storage | `lib/services/storage_service.dart` | SharedPreferences JSON; corrupt cache → empty list + `debugPrint`. |
 | State | `lib/state/assignment_store.dart` | Upsert, update, remove, toggle complete, calendar flag, share code. Injectable clock for tests. |
-| Screens | `lib/views/paste_view.dart`, `staging_view.dart`, `dashboard_view.dart` | Paste (clipboard button, sample schedule) → staging (edit title, date/time pickers, swipe to delete, review warnings, course code/name) → dashboard. |
-| Widgets | `lib/widgets/assignment_card.dart`, `share_dialog.dart` | Card with checkbox, course badge, priority badge, calendar button, long-press delete. Share dialog generates/copies codes; import dialog validates and imports. |
-| Theme | `lib/theme.dart` | Material 3 `ColorScheme.fromSeed`, light + dark, 8 course colors. |
+| Screens | `lib/views/paste_view.dart`, `staging_view.dart`, `dashboard_view.dart`, `edit_assignment_view.dart` | Paste (clipboard button, sample schedule) → staging (edit title, date/time pickers, swipe to delete, review warnings, course code/name) → dashboard → edit screen (title, date/time/clear, priority, notes, delete with Undo, original syllabus line). |
+| Dashboard | `lib/views/dashboard_view.dart` | Course filter chips (shown with ≥ 2 courses; long-press or ⚙ opens course settings), export menu, share, import. Animated cross-fade on filter change. |
+| Widgets | `lib/widgets/assignment_card.dart`, `share_dialog.dart`, `course_sheet.dart` | Card: swipe right = complete/un-complete, swipe left = delete, both with Undo; tap = container-transform into the editor; checkbox; animated strike-through and calendar icon. Share dialog: generate/copy code **and** copy the `.ics` feed link. Course sheet: rename, pick badge color, delete course + its assignments. |
+| Export | `lib/services/export_service.dart` | Markdown checklist and Notion-ready CSV (RFC 4180) for all courses or the filtered one, sent through the Android share sheet via `share_plus` (private FileProvider in the cache dir, no storage permission). |
+| Theme | `lib/theme.dart` | Material 3 `ColorScheme.fromSeed`, light + dark, 8 course colors, shared-axis page transitions (`animations` package), floating snackbars. |
 | Android | `mobile/android/**` | Kotlin DSL Gradle matching the Flutter 3.47 template (AGP 9.1.0, Kotlin 2.4.0, Gradle 9.3.1, Java 17 bytecode), `minSdk 26`, `targetSdk ≥ 34`, cleartext HTTP only to `10.0.2.2`/`localhost`, adaptive vector launcher icon, key.properties-based release signing with debug fallback. |
 | CI | `.github/workflows/build.yml` | Backend pytest; Flutter pub get → analyze → test → `appbundle` → merged-manifest permission audit → upload `.aab` artifact. |
-| Flutter tests | `mobile/test/*.dart` | Model JSON, buckets, share codes, calendar event, API client (MockClient), and 3 widget tests. |
+| Flutter tests | `mobile/test/*.dart` | Model JSON, buckets, share codes, calendar event, API client (MockClient), export golden strings, and 8 widget tests (empty state, completing, swipe complete/delete + Undo, editor save, course filter, course sheet rename/delete, navigation). |
 
 ### ⚠️ Not yet done / known limitations
 
@@ -101,10 +108,8 @@ Add a pytest case to `backend/test_parser.py` for every parser change or bug rep
 | End-to-end run on a device | anyone | Boot the backend, `flutter run` on an emulator, and walk paste → staging → dashboard → calendar → share/import. File bugs for anything broken. |
 | Play signing & upload | Agent 1 | CI signs with the debug key until secrets exist. |
 | Backend deployment | Agent 1 | No `render.yaml` / `fly.toml` yet. Set `vars.API_BASE_URL` in GitHub once deployed. Until then, release builds point at `http://10.0.2.2:8000` (emulator only). |
-| Migrations | Agent 2 | `create_all` only; no Alembic. |
-| `.ics` export | Agent 2 | Not started. |
-| Animations, swipe-to-complete, editing saved items | Agent 3 | Dashboard has checkbox + long-press delete only; no edit screen after save. |
-| Markdown / CSV export | Agent 4 | Not started. |
+| Rate limits across instances | Agent 2 | Limits are in-memory per process: fine on one free instance, but not shared if the API scales out. |
+| Store listing assets | Agent 3 | Screenshots, feature graphic (1024×500), 512×512 icon PNG for the Play listing. |
 | Offline parsing | stretch | Parsing requires the backend. A Dart port of the parser would make paste work offline. |
 | Shared-course sync | stretch | Importing a code copies a snapshot; later changes by the sharer don't propagate. |
 | Auth / rate limiting | stretch | Share codes are public and unauthenticated; anyone with a code can read that course. Don't store personal data in `notes`. |
@@ -237,6 +242,14 @@ Response `201`:
 
 The app turns imported tasks into local assignments with id `shared-<CODE>-<task id>`, so re-importing the same code updates instead of duplicating.
 
+### `GET /api/courses/{code}/calendar.ics`: subscribable calendar feed
+- `200`, `Content-Type: text/calendar; charset=utf-8`, CRLF line endings. Same 404/422 rules as above.
+- One `VEVENT` per **dated** task: `UID:task-<id>-<CODE>@duetoday`, floating `DTSTART` = due, `DTEND` = due + 1 h, `SUMMARY:[COURSE] Title`, `DESCRIPTION` with type/priority/weight/points/notes, `CATEGORIES` = task type.
+- The app's share dialog copies this URL. Google Calendar: **Other calendars → + → From URL** (the API must be reachable over public HTTPS).
+
+### Rate limits (all endpoints above)
+`429 {"detail": "Too many requests. Please wait a moment and try again."}` with a `Retry-After: <seconds>` header. The app shows `detail` in a snackbar.
+
 ---
 
 ## 4. Local development
@@ -257,6 +270,17 @@ Optional environment variables:
 | `DATABASE_URL` | `sqlite:///./duetoday.db` | Supabase: Project → Connect → *Transaction pooler* URI (`postgresql://…:6543/postgres`). `postgres://` / `postgresql://` are rewritten to `postgresql+psycopg://`. |
 | `ALLOWED_ORIGINS` | `*` | Comma-separated CORS origins (only matters for web clients and the docs UI). |
 | `PORT` | `8000` | Used by the Docker image. |
+| `RATE_LIMIT_PARSE_PER_MINUTE` | `30` | Per client IP. `0` disables. |
+| `RATE_LIMIT_SHARE_PER_HOUR` | `20` | `POST /api/courses`. |
+| `RATE_LIMIT_LOOKUP_PER_MINUTE` | `60` | `GET /api/courses/{code}` and `.ics`. |
+
+Migrations (Postgres; SQLite dev databases are created automatically):
+```bash
+alembic upgrade head                                  # apply
+alembic revision --autogenerate -m "add expires_at"   # after editing app/database.py, then review the file
+pytest -q test_migrations.py                          # proves models == migrations
+```
+On Windows, if pytest can't create its temp folder, add `--basetemp=.pytest-tmp`.
 
 Docker:
 ```bash
@@ -301,27 +325,26 @@ Owns: `.github/`, `mobile/android/app/build.gradle.kts` (signing), deployment co
 
 ### Agent 2: Backend
 Owns: `backend/`.
-1. Add Alembic (`alembic init migrations`), point `env.py` at `app.database.Base.metadata` and `DATABASE_URL`, and generate the baseline migration matching the current `courses` / `tasks` tables. Replace `create_all` at startup with `alembic upgrade head` in the Docker `CMD` (keep `create_all` for SQLite dev/tests).
-2. Add `GET /api/courses/{code}/calendar.ics` that returns `text/calendar` (RFC 5545 `VEVENT` per task, `DTSTART` = due, `DTEND` = +1 h, floating local time, stable `UID` = `<task id>@duetoday`). Students can subscribe in Google Calendar by URL, with still zero permissions on the phone. Add tests.
-3. Harden sharing: rate-limit `POST /api/courses` (e.g. `slowapi`), cap the body size, and consider an expiry column.
-4. Keep improving the parser from real syllabi; add each failing line as a pytest case first.
-5. Any contract change: update §3 and tell Agents 3/4.
+✅ Done: Alembic migrations, `.ics` feed, rate limiting (see §2). Remaining:
+1. Collect 5–10 real syllabi from classmates, paste each schedule into `/docs`, and turn every wrong or missed line into a failing pytest case before fixing the parser. This is the highest-value backend work left.
+2. Optional `expires_at` on `courses` (e.g. end of semester + 30 days) with a cleanup job. Write it as a new Alembic revision, never by editing `0001`.
+3. If the API ever runs more than one instance, move rate limits to Redis or the proxy.
+4. Any contract change: update §3 and tell Agents 3/4.
 
 ### Agent 3: Frontend UX
 Owns: `mobile/lib/views/`, `mobile/lib/widgets/`, `mobile/lib/theme.dart`.
-1. Swipe-to-complete on dashboard cards (`Dismissible` start-to-end → `toggleCompleted`, with an Undo `SnackBar`); keep long-press delete or move delete to end-to-start.
-2. Material 3 motion: `AnimatedList` / `AnimatedSwitcher` when items move between buckets, a hero transition from card to a new edit screen, and `animations` package shared-axis transitions between Paste → Staging.
-3. Course color badges: a course list/filter chip row on the dashboard; let users change a course's color (`Course.colorIndex`) and name.
-4. An edit screen for saved assignments (title, date/time, notes, priority override) that calls `AssignmentStore.update`.
-5. Empty/error/loading polish, accessibility (semantics labels on icon buttons, 48 dp targets, dynamic type), and a real launcher icon.
-6. Keep the widget tests in `mobile/test/widget_test.dart` passing; add tests for new interactions.
+✅ Done: swipe-to-complete/delete with Undo, edit screen with container transform, course filter chips + color/name/delete sheet, shared-axis transitions, animated completion (see §2). Remaining:
+1. Real launcher icon and Play listing graphics (512×512 icon, 1024×500 feature graphic, 4–8 phone screenshots).
+2. Run the app on an emulator and a real phone: check dark mode, large font sizes (Settings → Display → Font size), TalkBack, and small screens (the dashboard card row is the tightest layout).
+3. Optional: `AnimatedList` so cards slide between buckets instead of re-rendering; onboarding tip on first launch.
+4. Keep `mobile/test/widget_test.dart` passing. Note that `OpenContainer` draws the closed card with no `Material` ancestor during its transition, so keep the `Material(type: transparency)` wrapper in `AssignmentCard`. Also, a `tooltip` on the course chips would claim long-press and break the course sheet.
 
 ### Agent 4: Export & integrations
-Owns: new `mobile/lib/services/export_service.dart` and its UI entry points (coordinate with Agent 3).
-1. `ExportService.toMarkdown(courses, assignments)`: a heading per course, then a checklist `- [ ] **Midterm Exam** — Mon, Sep 28 11:59 PM · 20% · High`, sorted by due date, with completed items as `- [x]`.
-2. `ExportService.toNotionCsv(...)`: columns `Name,Course,Type,Due,Weight,Points,Priority,Status`; `Due` as `YYYY-MM-DD HH:mm` (Notion date-time import); RFC 4180 quoting.
-3. **Share with zero permissions:** use the Android share sheet (`share_plus`, which shares through `ACTION_SEND` / FileProvider in the app cache dir) or let the user pick the save location with the Storage Access Framework (`ACTION_CREATE_DOCUMENT`, e.g. `file_picker`'s `saveFile`). Do **not** request storage permissions. After adding any plugin, run a release build and confirm the CI permission check still passes.
-4. Unit-test both formats with golden strings in `mobile/test/export_service_test.dart`.
+Owns: `mobile/lib/services/export_service.dart` and its UI entry points (coordinate with Agent 3).
+
+✅ Done: Markdown checklist and Notion CSV (`Name,Course,Type,Due,Weight,Points,Priority,Status,Notes`), shared through `share_plus`, exported from the dashboard's download menu (all courses or the filtered course), with golden-string tests. `share_plus` 13.3.1 was confirmed to add no permissions. Remaining:
+1. Import the CSV into a real Notion database and the Markdown into Notion/Obsidian on a phone, and adjust column formats if anything maps wrong.
+2. Optional: a "Save to Files" option via the Storage Access Framework (`ACTION_CREATE_DOCUMENT`, still no storage permission). After adding any plugin, run a release build and confirm the CI permission check still passes.
 
 ---
 

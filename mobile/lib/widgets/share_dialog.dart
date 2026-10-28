@@ -63,6 +63,12 @@ class _ExportDialogState extends State<_ExportDialog> {
     }
   }
 
+  Future<void> _copy(String text, String confirmation) async {
+    final messenger = ScaffoldMessenger.of(context);
+    await Clipboard.setData(ClipboardData(text: text));
+    messenger.showSnackBar(SnackBar(content: Text(confirmation)));
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -85,6 +91,15 @@ class _ExportDialogState extends State<_ExportDialog> {
                 code,
                 style: theme.textTheme.displaySmall?.copyWith(letterSpacing: 8),
               ),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.link),
+                label: const Text('Copy calendar link'),
+                onPressed: () => _copy(
+                  context.read<ApiService>().calendarFeedUrl(code),
+                  'Calendar link copied. In Google Calendar, add it under Other calendars → From URL.',
+                ),
+              ),
             ],
           ],
         ),
@@ -99,11 +114,7 @@ class _ExportDialogState extends State<_ExportDialog> {
           TextButton.icon(
             icon: const Icon(Icons.copy),
             label: const Text('Copy'),
-            onPressed: () async {
-              final messenger = ScaffoldMessenger.of(context);
-              await Clipboard.setData(ClipboardData(text: code));
-              messenger.showSnackBar(SnackBar(content: Text('Copied $code')));
-            },
+            onPressed: () => _copy(code, 'Copied $code'),
           ),
         FilledButton(onPressed: () => Navigator.pop(context), child: const Text('Done')),
       ],

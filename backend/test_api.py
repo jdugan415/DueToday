@@ -93,3 +93,64 @@ def test_share_and_import_course(client):
 def test_import_unknown_and_malformed_codes(client):
     assert client.get("/api/courses/ABCDE").status_code == 404
     assert client.get("/api/courses/AB0").status_code == 422
+    assert client.get("/api/courses/ABCDE/calendar.ics").status_code == 404
+
+
+def _share(client, tasks):
+    response = client.post("/api/courses", json={"course_code": "CSC 4330", "tasks": tasks})
+    assert response.status_code == 201
+    return response.json()
+
+
+def test_calendar_feed(client):
+    course = _share(
+        client,
+        [
+            {"title": "Midterm, Part 1; Ch. 1-5", "task_type": "midterm",
+             "due_datetime": "2026-09-28T23:59:00", "weight_percent": 20, "priority": "high"},
+            {"title": "Undated lab"},
+        ],
+    )
+    response = client.get(f"/api/courses/{course['share_code']}/calendar.ics")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/calendar")
+
+    body = response.text
+    assert body.startswith("BEGIN:VCALENDAR\r\n") and body.endswith("END:VCALENDAR\r\n")
+    assert body.count("BEGIN:VEVENT") == 1  # undated tasks are skipped
+    assert "DTSTART:20260928T235900\r\n" in body
+    assert "DTEND:20260929T005900\r\n" in body
+    assert "SUMMARY:[CSC 4330] Midterm\\, Part 1\\; Ch. 1-5\r\n" in body
+    assert "Weight: 20%" in body
+    assert all(len(line.encode()) <= 75 for line in body.split("\r\n"))
+
+
+def test_calendar_lines_are_folded():
+    from datetime import datetime
+
+    from app.database import CourseRecord, TaskRecord
+    from app.ics import build_calendar
+
+    course = CourseRecord(id=1, share_code="ABCDE", course_code="CSC 4330", course_name=None)
+    course.tasks = [
+        TaskRecord(id=7, title="Résumé workshop " * 8, task_type="assignment", priority="low",
+                   due_datetime=datetime(2026, 10, 1, 17, 0)),
+    ]
+    body = build_calendar(course, now=datetime(2026, 10, 27, 12, 0))
+    lines = body.split("\r\n")
+    assert all(len(line.encode()) <= 75 for line in lines)
+    assert any(line.startswith(" ") for line in lines)  # continuation lines
+    unfolded = body.replace("\r\n ", "")
+    assert "SUMMARY:[CSC 4330] " + "Résumé workshop " * 8 in unfolded
+    assert "UID:task-7-ABCDE@duetoday" in unfolded
+
+
+def test_sharing_is_rate_limited(client, monkeypatch):
+    from app.ratelimit import share_limiter
+
+    monkeypatch.setattr(share_limiter, "limit", 2)
+    _share(client, [])
+    _share(client, [])
+    blocked = client.post("/api/courses", json={"course_code": "CSC 4330", "tasks": []})
+    assert blocked.status_code == 429
+    assert int(blocked.headers["retry-after"]) > 0
