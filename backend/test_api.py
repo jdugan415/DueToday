@@ -80,7 +80,7 @@ def test_share_and_import_course(client):
     assert created.status_code == 201
     body = created.json()
     code = body["share_code"]
-    assert len(code) == 5 and code.isupper()
+    assert len(code) == 5 and code == code.upper()
     assert body["course_code"] == "CSC 4330"
 
     fetched = client.get(f"/api/courses/{code.lower()}")

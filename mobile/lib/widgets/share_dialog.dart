@@ -248,6 +248,18 @@ class _ImportDialogState extends State<_ImportDialog> {
     super.dispose();
   }
 
+  String? get _validationError {
+    final code = ShareCode.normalize(_controller.text);
+    if (code.isEmpty) return null;
+    if (RegExp('[^${ShareCode.alphabet}]').hasMatch(code)) {
+      return 'Use letters and digits 2–9. Codes never contain 0, 1, O, I, or L.';
+    }
+    if (code.length != ShareCode.length) {
+      return 'Enter exactly 5 characters from the shared code.';
+    }
+    return null;
+  }
+
   Future<void> _import() async {
     final api = context.read<ApiService>();
     final store = context.read<AssignmentStore>();
@@ -279,23 +291,38 @@ class _ImportDialogState extends State<_ImportDialog> {
   Widget build(BuildContext context) {
     final valid = ShareCode.isValid(_controller.text);
     return AlertDialog(
-      title: const Text('Import class code'),
-      content: TextField(
-        controller: _controller,
-        autofocus: true,
-        maxLength: ShareCode.length,
-        textCapitalization: TextCapitalization.characters,
-        textAlign: TextAlign.center,
-        style: _codeStyle.copyWith(color: context.colors.textPrimary),
-        inputFormatters: [
-          FilteringTextInputFormatter.allow(RegExp('[A-Za-z0-9]')),
-          const UpperCaseTextFormatter(),
+      title: const Text('Import shared course'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Enter the 5-character code a classmate generated using Share a course. This is not your school course number.',
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            maxLength: ShareCode.length,
+            maxLengthEnforcement: MaxLengthEnforcement.none,
+            textCapitalization: TextCapitalization.characters,
+            textAlign: TextAlign.center,
+            style: _codeStyle.copyWith(color: context.colors.textPrimary),
+            inputFormatters: [
+              const UpperCaseTextFormatter(),
+            ],
+            decoration: InputDecoration(
+              labelText: 'Share code',
+              hintText: 'ABC23',
+              errorText: _error ?? _validationError,
+              errorMaxLines: 3,
+            ),
+            onChanged: (_) => setState(() => _error = null),
+            onSubmitted: (_) {
+              if (valid && !_loading) _import();
+            },
+          ),
         ],
-        decoration: InputDecoration(hintText: 'ABC23', errorText: _error, counterText: ''),
-        onChanged: (_) => setState(() => _error = null),
-        onSubmitted: (_) {
-          if (valid && !_loading) _import();
-        },
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),

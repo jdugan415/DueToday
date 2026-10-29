@@ -22,8 +22,10 @@ class ParseResult {
     required this.courseCode,
     required this.assignments,
     required this.warnings,
+    this.needsClassDays = false,
   });
 
+  final bool needsClassDays;
   final String courseCode;
   final List<Assignment> assignments;
   final List<String> warnings;
@@ -64,6 +66,7 @@ class ApiService {
     String rawText, {
     String? courseCode,
     DateTime? today,
+    List<int>? classDays,
   }) async {
     final requestedCode = _normalizedCode(courseCode);
     final body = await _send(() => _client.post(
@@ -71,6 +74,7 @@ class ApiService {
           headers: _jsonHeaders,
           body: jsonEncode({
             'raw_text': rawText,
+            if (classDays != null) 'class_days': classDays,
             'course_code': requestedCode,
             'reference_date': DateFormat('yyyy-MM-dd').format(today ?? DateTime.now()),
           }),
@@ -94,6 +98,7 @@ class ApiService {
     required String filename,
     String? courseCode,
     DateTime? today,
+    List<int>? classDays,
   }) async {
     if (bytes.length > maxPdfBytes) {
       throw const ApiException('That PDF is larger than 10 MB. Try exporting just the schedule pages.');
@@ -109,6 +114,7 @@ class ApiService {
       ));
     if (requestedCode != null) request.fields['course_code'] = requestedCode;
 
+    if (classDays != null) request.fields['class_days'] = jsonEncode(classDays);
     final body = await _send(
       () async => http.Response.fromStream(await _client.send(request)),
       timeout: pdfTimeout,
@@ -123,6 +129,7 @@ class ApiService {
     final code = body['course_code'] as String? ?? requestedCode ?? fallbackCourseCode;
     final tasks = (body['tasks'] as List).cast<Map<String, dynamic>>();
     return ParseResult(
+      needsClassDays: body['needs_class_days'] == true,
       courseCode: code,
       assignments: tasks.map((t) => Assignment.fromParsedJson(t, courseCode: code)).toList(),
       warnings: (body['warnings'] as List? ?? const []).cast<String>(),

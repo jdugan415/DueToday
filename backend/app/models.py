@@ -43,6 +43,15 @@ class ParseRequest(BaseModel):
     # The client's local "today". Relative phrases ("due Tuesday") and
     # year-less dates are resolved against it. Defaults to the server's date.
     reference_date: date | None = None
+    class_days: list[int] | None = None
+
+    @field_validator("class_days")
+    @classmethod
+    def validate_class_days(cls, value):
+        if value is not None and (len(value) != 2 or len(set(value)) != 2 or any(d < 0 or d > 6 for d in value)):
+            raise ValueError("Choose two distinct weekdays (Monday=0 through Sunday=6).")
+        return value
+
     default_due_time: str = Field(default="23:59", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
@@ -62,6 +71,7 @@ class ParsedTask(BaseModel):
 
 
 class ParseResponse(BaseModel):
+    needs_class_days: bool = False
     course_code: str | None
     reference_date: date
     tasks: list[ParsedTask]

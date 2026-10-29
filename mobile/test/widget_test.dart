@@ -39,8 +39,8 @@ void main() {
     expect(find.text('0 Due Today'), findsOneWidget);
     expect(find.text('All caught up!'), findsOneWidget);
     expect(find.text('No upcoming deadlines on your radar'), findsOneWidget);
-    expect(find.text('Add Course'), findsOneWidget);
-    expect(find.text('Parse Syllabus'), findsOneWidget);
+    expect(find.text('Add Course'), findsNothing);
+    expect(find.text('Add syllabus'), findsOneWidget);
   });
 
   testWidgets('lists saved assignments under Due Today and completes them', (tester) async {
@@ -188,14 +188,48 @@ void main() {
     expect(store.assignments.any((a) => a.courseCode == 'MATH 2057'), isFalse);
   });
 
-  testWidgets('Parse Syllabus opens the paste screen', (tester) async {
+  testWidgets('Add syllabus opens the paste screen', (tester) async {
     _usePhoneScreen(tester);
     await tester.pumpWidget(DueTodayApp(store: await _store(now), api: _offlineApi()));
-    await tester.tap(find.text('Parse Syllabus'));
+    await tester.tap(find.text('Add syllabus'));
     await tester.pumpAndSettle();
 
     expect(find.text('Parse Schedule'), findsOneWidget);
     expect(find.byType(TextField), findsNWidgets(2));
+  });
+
+  testWidgets('import explains share codes and validates input without truncation', (tester) async {
+    _usePhoneScreen(tester);
+    final requests = <http.Request>[];
+    final api = ApiService(baseUrl: 'http://test', client: MockClient((request) async {
+      requests.add(request);
+      return http.Response('{"detail":"Not found"}', 404);
+    }));
+    await tester.pumpWidget(DueTodayApp(store: await _store(now), api: api));
+    await tester.tap(find.byTooltip('Import shared course'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('This is not your school course number'), findsOneWidget);
+    final field = find.byType(TextField);
+    final button = find.widgetWithText(FilledButton, 'Import');
+    for (final code in ['AB', 'ABC234', 'ABCD0', 'ABCDI', 'ABC!2']) {
+      await tester.enterText(field, code);
+      await tester.pumpAndSettle();
+      expect(tester.widget<FilledButton>(button).onPressed, isNull);
+      expect(tester.widget<TextField>(field).decoration!.errorText, isNotNull);
+      expect(tester.widget<TextField>(field).controller!.text, code);
+    }
+    expect(requests, isEmpty);
+    await tester.enterText(field, 'ab2cd');
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(field).controller!.text, 'AB2CD');
+    expect(tester.widget<FilledButton>(button).onPressed, isNotNull);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(requests.single.url.path, '/api/courses/AB2CD');
+    expect(find.text('No class found with that code.'), findsOneWidget);
+    await tester.enterText(field, 'K7Q2M');
+    await tester.pumpAndSettle();
+    expect(find.text('No class found with that code.'), findsNothing);
   });
 
   testWidgets('renders in dark mode', (tester) async {

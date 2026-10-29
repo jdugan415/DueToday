@@ -215,6 +215,7 @@ def parse_syllabus(
     course_code: str | None = None,
     reference_date: date | None = None,
     default_due_time: str = DEFAULT_DUE_TIME,
+    class_days: list[int] | None = None,
 ) -> ParseResponse:
     """Extract assignments from raw syllabus text.
 
@@ -227,15 +228,31 @@ def parse_syllabus(
     context = _Context()
     drafts: list[_Draft] = []
 
-    for raw_line in raw_text.splitlines():
+    # Only infer weekdays from explicitly labeled meeting information, never
+    # from assignment dates or holiday notices elsewhere in the syllabus.
+    if class_days is None:
+        names = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        for line in raw_text.splitlines():
+            if re.search(r"\b(?:class\s+days|meets|meeting\s+days)\s*[:=-]?", line, re.I):
+                found = [i for i, name in enumerate(names) if re.search(rf"\b{name}s?\b", line, re.I)]
+                if len(found) == 2:
+                    class_days = found
+                    break
+    prose, weekly_drafts = _weekly_table_drafts(raw_text, reference, class_days)
+    for raw_line in prose.splitlines():
         line = _BULLET_RE.sub("", raw_line).strip()
         if not line or _SKIP_LINE_RE.search(line):
             continue
         drafts.extend(_parse_line(line, reference, context))
-    drafts = _consolidate(drafts)
+    drafts = _consolidate(drafts) + weekly_drafts
 
     tasks: list[ParsedTask] = []
     warnings: list[str] = []
+    if any(d.due_date is None for d in weekly_drafts):
+        warnings.append(
+            "This weekly table needs class weekdays or exact deadlines for some items. "
+            "Week/session labels are preserved; set dates for these items before saving."
+        )
     seen: set[tuple[str, date | None]] = set()
     resolved_code = _normalize_course_code(course_code) or detect_course_code(raw_text)
 
@@ -276,11 +293,102 @@ def parse_syllabus(
 
     tasks.sort(key=lambda t: (t.due_datetime is None, t.due_datetime or datetime.max, t.title))
     return ParseResponse(
+        needs_class_days=any(d.due_date is None and "class [" in d.source_line for d in weekly_drafts) and class_days is None,
         course_code=resolved_code,
         reference_date=reference,
         tasks=tasks,
         warnings=warnings,
     )
+
+
+_WEEK_ROW_RE = re.compile(r"^\s*week\s+(\d{1,2})\b", re.IGNORECASE)
+_SESSION_HEADER_RE = re.compile(r"(?:1st|first|2nd|second)\s+day\s+of\s+the\s+week", re.IGNORECASE)
+_TEACHING_CELL_RE = re.compile(r"\b(?:lecture|introduction|workday|syllabus)\b", re.IGNORECASE)
+
+
+def _weekly_table_drafts(text: str, reference: date, class_days: list[int] | None = None) -> tuple[str, list[_Draft]]:
+    """Isolate ordinal-session tables before line-based date association.
+
+    These columns identify class sessions, not weekdays. Never borrow a date
+    from another cell (especially administrative notes), or guess a deadline
+    from a week range. Keep the week/session in the review title instead.
+    Only opt in when both ordinal headers and a Week row are present.
+    """
+    lines = text.expandtabs(8).splitlines()
+    header_index = next((i for i, line in enumerate(lines)
+                         if len(_SESSION_HEADER_RE.findall(line)) == 2), None)
+    if header_index is None:
+        return text, []
+    headers = list(_SESSION_HEADER_RE.finditer(lines[header_index]))
+    weeks = [(i, _WEEK_ROW_RE.match(line)) for i, line in enumerate(lines)
+             if i > header_index and _WEEK_ROW_RE.match(line)]
+    if not weeks:
+        return text, []
+    # Content is left aligned while headers may be centered. Locate the first
+    # content cell from a week row, and boundaries in the gaps between headers.
+    starts = []
+    for i, match in weeks:
+        gap = re.match(r"\s{3,}(?=\S)", lines[i][match.end():])
+        if gap:
+            starts.append(match.end() + gap.end())
+    if not starts:
+        return text, []
+    left = min(starts)
+    middle = (headers[0].end() + headers[1].start()) // 2
+    notes = re.search(r"important\s+dates", lines[header_index], re.IGNORECASE)
+    right = (headers[1].end() + notes.start()) // 2 if notes else None
+    if left >= middle:
+        return text, []
+
+    consumed = {header_index}
+    drafts: list[_Draft] = []
+    for number, (start, match) in enumerate(weeks):
+        end = weeks[number + 1][0] if number + 1 < len(weeks) else len(lines)
+        block = []
+        for i in range(start, end):
+            line = lines[i]
+            # A left-aligned sentence after the last row is outside the table.
+            label = line[:left].strip()
+            if i > start and label and len(line.lstrip()) > len(label) and not re.match(
+                r"^[A-Za-z]{2,9}\s+\d", label
+            ):
+                break
+            if i > start and line and not line.startswith(' ') and not re.match(
+                r"^[A-Za-z]{2,9}\s+\d{1,2}\s*[-–]", label
+            ):
+                break
+            consumed.add(i)
+            block.append(line)
+        week = f"Week {match.group(1)}"
+        range_label = ' '.join(line[:left].strip() for line in block[1:] if line[:left].strip())
+        # Correct common month typos only inside the week-label column.
+        normalized_range = re.sub(r"\bAgu\b", "Aug", range_label, flags=re.I)
+        normalized_range = re.sub(r"\bNo(?=\s+\d)", "Nov", normalized_range, flags=re.I)
+        dates = _find_explicit_dates(normalized_range, reference)
+        session_dates = sorted(dates[0].anchor + timedelta(days=(day - dates[0].anchor.weekday()) % 7)
+                               for day in class_days) if dates and class_days else []
+        for line in block:
+            for cell, session in [(line[left:middle].strip(), 'first class'),
+                                  (line[middle:right].strip(), 'second class')]:
+                if not cell or _TEACHING_CELL_RE.search(cell) or _SKIP_LINE_RE.search(cell):
+                    continue
+                final_period = bool(re.fullmatch(r"final\s+exams?", cell, re.IGNORECASE))
+                cell = re.sub(r"\bFinal Exams\b", "Final Exam", cell, flags=re.IGNORECASE)
+                cell_drafts = _parse_line(cell, reference, _Context())
+                for draft in cell_drafts:
+                    if draft.task_type == 'project' and any(d.title.lower() == 'final' for d in cell_drafts):
+                        draft.title = cell.strip()
+                    if draft.title.lower() == 'final' and any(d.task_type == 'project' for d in cell_drafts):
+                        continue
+                    if draft.due_date is None and session_dates and not final_period:
+                        draft.due_date = session_dates[0 if session == 'first class' else 1]
+                        draft.confidence = 0.85
+                    location = week if final_period else f"{week}, {session}"
+                    if draft.due_date is None:
+                        draft.title += f" ({location})"
+                    draft.source_line = f"{location} [{range_label}]: {cell}"
+                    drafts.append(draft)
+    return '\n'.join(line for i, line in enumerate(lines) if i not in consumed), drafts
 
 
 def _consolidate(drafts: list[_Draft]) -> list[_Draft]:

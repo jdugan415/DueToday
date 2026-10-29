@@ -46,8 +46,8 @@ class _DashboardViewState extends State<DashboardView> {
         toolbarHeight: 52,
         actions: [
           IconButton(
-            tooltip: 'Import class code',
-            icon: const Icon(Icons.group_add_outlined),
+            tooltip: 'Import shared course',
+            icon: const Icon(Icons.download_for_offline_outlined),
             onPressed: () => ShareDialog.showImport(context),
           ),
           IconButton(
@@ -98,7 +98,7 @@ class _DashboardViewState extends State<DashboardView> {
                 ),
               ),
             if (store.assignments.isEmpty || !hasOpenWork && buckets.completed.isEmpty)
-              SliverFillRemaining(hasScrollBody: false, child: _CaughtUp(onAdd: _openPaste))
+              SliverFillRemaining(hasScrollBody: false, child: const _CaughtUp())
             else ...[
               ..._section(context, 'Overdue', colors.urgent, buckets.overdue),
               ..._section(context, 'Due Today', const Color(0xFFFB7185), buckets.dueToday, showWhenEmpty: true),
@@ -116,7 +116,7 @@ class _DashboardViewState extends State<DashboardView> {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _openPaste,
         icon: const Icon(Icons.auto_awesome_rounded),
-        label: const Text('Parse Syllabus'),
+        label: const Text('Add syllabus'),
       ),
     );
   }
@@ -340,9 +340,7 @@ class _CourseFilterBar extends StatelessWidget {
 
 /// Whole-dashboard empty state.
 class _CaughtUp extends StatelessWidget {
-  const _CaughtUp({required this.onAdd});
-
-  final VoidCallback onAdd;
+  const _CaughtUp();
 
   @override
   Widget build(BuildContext context) {
@@ -371,12 +369,7 @@ class _CaughtUp extends StatelessWidget {
             style: theme.textTheme.bodyMedium?.copyWith(color: colors.textSecondary),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: onAdd,
-            icon: const Icon(Icons.add_rounded),
-            label: const Text('Add Course'),
-          ),
+
         ],
       ),
     );

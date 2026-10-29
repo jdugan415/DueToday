@@ -112,6 +112,29 @@ void main() {
   });
 
   group('PasteView PDF upload', () {
+    testWidgets('asks for missing weekdays and resubmits the PDF', (tester) async {
+      var calls = 0;
+      final api = ApiService(baseUrl: 'http://test', client: MockClient((request) async {
+        calls++;
+        if (calls == 2) {
+          expect(utf8.decode(request.bodyBytes, allowMalformed: true), contains('[0,2]'));
+        }
+        return http.Response(jsonEncode({..._parseResponse(), 'needs_class_days': calls == 1}), 200);
+      }));
+      await tester.pumpWidget(await _app(api: api, pick: () async => (name: 'schedule.pdf', bytes: _fakePdf)));
+      await tester.tap(find.text('Choose File'));
+      await tester.pumpAndSettle();
+      expect(find.text('Which days does this class meet?'), findsOneWidget);
+      expect(calls, 1);
+      await tester.tap(find.text('Monday'));
+      await tester.tap(find.text('Wednesday'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Use these days'));
+      await tester.pumpAndSettle();
+      expect(calls, 2);
+      expect(find.text('Midterm Exam'), findsWidgets);
+    });
+
     testWidgets('shows the upload card', (tester) async {
       await tester.pumpWidget(await _app(
         api: ApiService(baseUrl: 'http://test', client: MockClient((_) async => http.Response('', 500))),

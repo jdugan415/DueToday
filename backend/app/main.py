@@ -5,6 +5,7 @@ Run locally:  uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from collections.abc import AsyncIterator
@@ -16,6 +17,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from pydantic import ValidationError
 
 from . import __version__
 from .database import CourseRecord, create_course, get_course_by_share_code, get_db, init_db
@@ -57,6 +59,7 @@ def parse(request: ParseRequest) -> ParseResponse:
         course_code=request.course_code,
         reference_date=request.reference_date or date.today(),
         default_due_time=request.default_due_time,
+        class_days=request.class_days,
     )
 
 
@@ -75,11 +78,16 @@ _PDF_ERROR_RESPONSES = {
 )
 async def parse_pdf_endpoint(
     file: UploadFile = File(...),
+    class_days: str | None = Form(default=None),
     course_code: str | None = Form(default=None, max_length=20),
     reference_date: date | None = Form(default=None),
     default_due_time: str = Form(default="23:59", pattern=r"^([01]\d|2[0-3]):[0-5]\d$"),
 ) -> ParseResponse | JSONResponse:
     """Same as POST /api/parse, but the schedule comes from an uploaded PDF."""
+    try:
+        days = ParseRequest(raw_text="validation", class_days=json.loads(class_days) if class_days else None).class_days
+    except (ValueError, ValidationError):
+        return _pdf_error(422, "Choose two distinct weekdays (Monday=0 through Sunday=6).")
     named_pdf = (file.filename or "").lower().endswith(".pdf")
     if not named_pdf and file.content_type != "application/pdf":
         return _pdf_error(415, "Please choose a .pdf file.")
@@ -100,6 +108,7 @@ async def parse_pdf_endpoint(
         course_code=course_code,
         reference_date=reference_date or date.today(),
         default_due_time=default_due_time,
+        class_days=days,
     )
 
 

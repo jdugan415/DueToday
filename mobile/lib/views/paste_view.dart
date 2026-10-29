@@ -68,7 +68,7 @@ class _PasteViewState extends State<PasteView> {
     final today = context.read<AssignmentStore>().now();
     await _run(
       'Parsing schedule…',
-      () => api.parseSyllabus(raw, courseCode: _codeController.text, today: today),
+      (days) => api.parseSyllabus(raw, courseCode: _codeController.text, today: today, classDays: days),
     );
   }
 
@@ -94,7 +94,8 @@ class _PasteViewState extends State<PasteView> {
     }
     await _run(
       'Reading ${picked.name}…',
-      () => api.parseSyllabusPdf(
+      (days) => api.parseSyllabusPdf(
+        classDays: days,
         bytes: picked!.bytes,
         filename: picked.name,
         courseCode: _codeController.text,
@@ -104,11 +105,17 @@ class _PasteViewState extends State<PasteView> {
   }
 
   /// Shows progress while [request] runs, then opens the review screen.
-  Future<void> _run(String status, Future<ParseResult> Function() request) async {
+  Future<void> _run(String status, Future<ParseResult> Function(List<int>?) request) async {
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _busy = status);
     try {
-      final result = await request();
+      var result = await request(null);
+      if (!mounted) return;
+      if (result.needsClassDays) {
+        final days = await _askClassDays();
+        if (!mounted) return;
+        if (days != null) result = await request(days);
+      }
       if (!mounted) return;
       setState(() => _busy = null);
       await Navigator.of(context).push(
@@ -122,6 +129,38 @@ class _PasteViewState extends State<PasteView> {
     } finally {
       if (mounted && _busy != null) setState(() => _busy = null);
     }
+  }
+
+  Future<List<int>?> _askClassDays() async {
+    final selected = <int>{};
+    const names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    return showDialog<List<int>>(
+      context: context,
+      builder: (context) => StatefulBuilder(builder: (context, update) => AlertDialog(
+        title: const Text('Which days does this class meet?'),
+        content: SingleChildScrollView(child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('The schedule uses first and second class days without naming the weekdays. Choose two days to calculate project dates. Exam weeks still need an exact date.'),
+            const SizedBox(height: 12),
+            Wrap(spacing: 6, children: List.generate(7, (day) => FilterChip(
+              label: Text(names[day]), selected: selected.contains(day),
+              onSelected: (value) => update(() {
+                if (!value) { selected.remove(day); }
+                else if (selected.length < 2) { selected.add(day); }
+              }),
+            ))),
+          ],
+        )),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Review without dates')),
+          FilledButton(onPressed: selected.length == 2
+            ? () => Navigator.pop(context, selected.toList()..sort()) : null,
+            child: const Text('Use these days')),
+        ],
+      )),
+    );
   }
 
   @override

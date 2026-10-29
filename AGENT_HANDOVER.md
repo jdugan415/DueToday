@@ -72,6 +72,71 @@ Add a pytest case to `backend/test_parser.py` for every parser change or bug rep
 
 ## 2. Current system state
 
+### Development checkpoint — 2026-10-28
+
+Continue on **`fix/clarify-syllabus-and-course-import`**. The user explicitly
+wants to keep working here before merging; do not merge into `main`.
+
+Completed in this branch:
+- Simplified the dashboard to one Add syllabus action and clarified generated
+  share-code import, including validation without silent input truncation.
+- Added a conservative parser path for weekly tables with first/second class
+  columns. It isolates administrative dates, excludes teaching-only entries,
+  preserves project critiques/finals, and retains week/session source evidence.
+  This is one supported pattern, not a standardized syllabus format.
+- Added optional `class_days` and response `needs_class_days` (contract in §3).
+  The app asks for two weekdays and reparses; users may instead review undated
+  items. Explicitly labeled meeting days can be inferred. Unknown exam dates
+  remain unset. The question currently covers this weekly-table pattern, not
+  arbitrary missing information in every document.
+- Checked an art schedule locally: Monday/Wednesday resolves eight project
+  milestones, with one final exam still needing an exact date. Nine total items;
+  five past-due items are hidden by default on the October 28 review screen.
+  The attached PDF is not included in version control.
+- Added synthetic regression coverage, including different column widths,
+  explicit dates, meeting-day inference, validation, and ordinary schedules.
+  Fixed a flaky share-code test that incorrectly rejected valid all-digit codes.
+
+Verification for this checkpoint: **117 backend tests pass**, `flutter analyze`
+has no issues, and `flutter build apk --debug` succeeds. Installed on the Pixel
+10 Pro emulator and manually verified PDF selection → weekday question →
+Monday/Wednesday → corrected review results. Flutter widget tests were added,
+but the local macOS x64 Flutter test runtime crashes during CPU initialization;
+they have **not** been verified passing in this session. Run them in CI or a
+working Flutter environment before merge. Earlier release checks below are
+historical; a release build was not revalidated for this checkpoint.
+
+Next session, in priority order:
+1. Evaluate Gemini-assisted extraction against the current parser using 10–20
+   varied, permission-cleared syllabi. Establish expected assignments/dates and
+   measure missed items, false items, incorrect dates, and useful clarification
+   questions. Use synthetic/anonymized fixtures in the repository.
+2. Proposed architecture (discussed, **not implemented**): Gemini returns a
+   structured assignment schema with source evidence and missing information;
+   backend code validates/deduplicates; the app asks targeted questions and
+   retains review before saving. Keep the existing parser as a fallback for
+   unavailable service or exhausted quota. Do not claim broad coverage based
+   on the current PDF or a model's self-reported confidence.
+3. Before integrating, check the chosen model's actual free-tier quotas in AI
+   Studio and data-handling terms. Free-tier content may be used to improve
+   Google's products. Keep the API key server-side in environment configuration,
+   never in Flutter or Git. No Gemini API integration or document transmission
+   to Gemini occurred in this checkpoint. The prior Gitlore integration was
+   mentioned by the user but has not been inspected or reused.
+4. Generalize missing-information handling beyond the current two-weekday
+   prompt (e.g. semester year, ambiguous date, exam window); never silently
+   invent a deadline. Test varied layouts and preserve existing behavior.
+5. Run the new Flutter tests and broader device/accessibility checks, then
+   continue deployment/signing work in §5/§7 when ready. Merge only after the
+   user is ready and the repository's review/CI requirements are met.
+
+Reference docs for the proposed evaluation:
+- https://ai.google.dev/gemini-api/docs/structured-output
+- https://ai.google.dev/gemini-api/docs/rate-limits
+- https://ai.google.dev/gemini-api/docs/pricing
+
+2026-10-28 UX update: the dashboard uses one **Add syllabus** action (the duplicate empty-state Add Course button was removed). **Import shared course** uses a download icon and explains that it accepts a generated share code, not a school course number. The dialog shows inline length/character validation without silently truncating input; the backend five-character code contract is unchanged.
+
 > Last verified 2026-10-27 with Flutter 3.47.2 / Dart 3.13.2: `flutter analyze` reports no issues, all 43 Flutter tests pass, `flutter build appbundle --release` succeeds, and the merged release manifest holds only `INTERNET` (plus AndroidX's app-private `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`). Backend: 110 pytest cases pass. On a Pixel 9 Pro emulator against a local backend, the full PDF flow worked with a real syllabus: system picker (no permission prompt) → upload → review (on Oct 27: 14 upcoming items shown, 12 past items left out behind a switch) → save → dashboard with no Overdue flood. It has not been tested on a physical phone.
 >
 > **2026-10-27 updates:**
@@ -129,6 +194,18 @@ Add a pytest case to `backend/test_parser.py` for every parser change or bug rep
 ---
 
 ## 3. API contract reference
+
+Weekly ordinal-session tables now isolate class columns from Important Dates.
+`POST /api/parse` accepts optional `class_days`: two distinct integer weekdays
+(Monday=0 through Sunday=6). PDF uploads accept the same value as a JSON-encoded
+multipart field, e.g. `[0,2]`. Invalid values return 422. Parse responses add
+`needs_class_days` (boolean, defaults false). The app asks for two weekdays when
+this is true, then repeats the parse with the answer; skipping keeps undated
+items for manual review. Explicitly labeled meeting weekdays can be inferred.
+Session dates are ordered within the row's seven-day week. Explicit task dates
+win; merged Final Exams rows remain undated. Synthetic tests are in
+`backend/test_weekly_schedule.py`. No actual student PDF is stored in the repo.
+
 
 Base URL: `http://localhost:8000` locally (`http://10.0.2.2:8000` from the Android emulator). Interactive docs: `/docs`. Errors use FastAPI's shape: `{"detail": "message"}` (or a list of validation errors for 422).
 
@@ -359,7 +436,7 @@ Owns: `.github/`, `mobile/android/app/build.gradle.kts` (signing), deployment co
 ### Agent 2: Backend
 Owns: `backend/`.
 ✅ Done: Alembic migrations, `.ics` feed, rate limiting, PDF upload, prose filtering from one real syllabus (see §2). Remaining:
-1. Collect 5–10 more real syllabi from classmates (different departments and formats), upload each PDF at `/docs` → `POST /api/parse-pdf`, and turn every wrong or missed item into a failing pytest case **using made-up text in the same shape** (never commit someone's real syllabus) before fixing the parser. This is still the highest-value backend work left.
+1. Collect 5–10 more real syllabi from classmates (different departments and formats), upload each PDF at `/docs` → `POST /api/parse-pdf`, and turn every wrong or missed item into a failing pytest case **using made-up text in the same shape** (never commit someone's real syllabus) before fixing the parser. Coordinate this corpus with the Gemini comparison in the development checkpoint above.
 2. Optional `expires_at` on `courses` (e.g. end of semester + 30 days) with a cleanup job. Write it as a new Alembic revision, never by editing `0001`.
 3. If the API ever runs more than one instance, move rate limits to Redis or the proxy.
 4. Any contract change: update §3 and tell Agents 3/4.

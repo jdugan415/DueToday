@@ -12,6 +12,7 @@ mobile/.dart_tool/
 mobile/.flutter-plugins
 mobile/.flutter-plugins-dependencies
 mobile/build/
+mobile/android/.kotlin/
 mobile/ios/
 mobile/web/
 mobile/linux/
