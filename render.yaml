@@ -1,0 +1,13 @@
+# Docker CMD applies Alembic migrations before starting Uvicorn on $PORT.
+services:
+  - type: web
+    name: duetoday-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    envVars:
+      # Supply the Supabase transaction-pooler URI in Render, never in Git.
+      - key: DATABASE_URL
+        sync: false

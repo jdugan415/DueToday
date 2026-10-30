@@ -80,6 +80,9 @@ Add a pytest case to `backend/test_parser.py` for every parser change or bug rep
 
 ### ✅ Implemented
 
+- **2026-10-30 deployment preparation:** root `render.yaml` configures the Docker web service, backend build context, `/health` check, and a prompted `DATABASE_URL`. `backend/DEPLOYMENT.md` covers Supabase, Render, the existing CI `API_BASE_URL` wiring, and live acceptance checks. Deployment, the live URL variable, and real-phone verification are still pending; B1–B2 remain incomplete.
+  Validation: Render's official JSON schema accepts the Blueprint; 110 backend tests and 43 Flutter tests pass, and Flutter analysis reports no issues. Docker build and live Supabase/Render checks have not been run.
+
 | Area | File(s) | Notes |
 | --- | --- | --- |
 | Parse API | `backend/app/main.py`, `parser.py`, `models.py` | Full algorithm in §1. 87 parser edge-case tests. Tabs and runs of 3+ spaces are treated as table-cell boundaries, so a "Topic" column never leaks into a title. **Prose filtering** (tuned on a real 2026 LSU syllabus): plural keywords ("Quizzes", "Labs") are categories, not items; a keyword followed within two words by a policy word ("accounts for", "should", "contributes", "policy", "weight", "schedule"...) or starting a lowercase list is a sentence; a bare "Final" must stand alone ("Final date to drop" is skipped); context dates flow only into short schedule lines (≤ 8 words, no weight, not a bare heading); undated grading-table rows merge their weight into the dated item with the same title; sentence-style duplicates of a dated item are dropped. |
