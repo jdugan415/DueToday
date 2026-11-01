@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../models/assignment.dart';
 import '../models/course.dart';
 import '../models/dashboard_buckets.dart';
 import '../services/export_service.dart';
+import '../services/ics_service.dart';
 import '../state/assignment_store.dart';
 import '../theme/app_theme.dart';
 import '../widgets/assignment_card.dart';
@@ -54,6 +57,13 @@ class _DashboardViewState extends State<DashboardView> {
             tooltip: 'Share a course',
             icon: const Icon(Icons.ios_share_rounded),
             onPressed: courses.isEmpty ? null : () => _share(context, courses, filter),
+          ),
+          IconButton(
+            tooltip: 'Add all to calendar',
+            icon: const Icon(Icons.edit_calendar_outlined),
+            onPressed: visible.any((a) => a.dueAt != null && !a.completed)
+                ? () => _addAllToCalendar(context, store, visible, filter == null ? null : store.courseFor(filter))
+                : null,
           ),
           PopupMenuButton<ExportFormat>(
             tooltip: 'Export',
@@ -157,6 +167,57 @@ class _DashboardViewState extends State<DashboardView> {
       await ExportService.share(format, courses, assignments);
     } on Exception catch (error) {
       messenger.showSnackBar(SnackBar(content: Text('Export failed: $error')));
+    }
+  }
+
+  /// Puts every upcoming open deadline in view into one `.ics` file and hands
+  /// it to the user's calendar app through the share sheet (no permissions).
+  Future<void> _addAllToCalendar(
+    BuildContext context,
+    AssignmentStore store,
+    List<Assignment> visible,
+    Course? course,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final now = store.now();
+    final items = IcsService.eligible(visible, now);
+    if (items.isEmpty) {
+      final allAdded = visible.any((a) => a.addedToCalendar && !a.completed && (a.dueAt?.isAfter(now) ?? false));
+      messenger.showSnackBar(SnackBar(
+        content: Text(allAdded ? 'Everything upcoming is already in your calendar.' : 'No upcoming deadlines to add.'),
+      ));
+      return;
+    }
+
+    final count = items.length == 1 ? '1 deadline' : '${items.length} deadlines';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Add $count to your calendar?'),
+        content: Text(
+          'Upcoming assignments from ${course?.displayName ?? 'all courses'} go into one calendar file. '
+          'Pick your calendar app on the next screen, then confirm the import there.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Continue')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    HapticFeedback.lightImpact();
+    try {
+      final result = await IcsService.share(
+        items,
+        calendarName: course == null ? 'DueToday' : 'DueToday · ${course.code}',
+      );
+      if (result.status == ShareResultStatus.success) {
+        await store.markAllAddedToCalendar(items.map((a) => a.id));
+        messenger.showSnackBar(SnackBar(content: Text('Sent $count to your calendar app.')));
+      }
+    } on Exception catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text("Couldn't open the calendar file: $error")));
     }
   }
 

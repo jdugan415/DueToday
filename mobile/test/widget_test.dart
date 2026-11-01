@@ -209,4 +209,39 @@ void main() {
     expect(find.text('My Deadlines'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('add all to calendar offers only upcoming open deadlines', (tester) async {
+    _usePhoneScreen(tester);
+    final store = await _store(now);
+    await store.addAll(const Course(code: 'CSC 4330'), [
+      Assignment(id: 'up1', courseCode: 'CSC 4330', title: 'Lab 2', dueAt: DateTime(2026, 9, 3, 17), timeSpecified: true),
+      Assignment(id: 'up2', courseCode: 'CSC 4330', title: 'Quiz 1', dueAt: DateTime(2026, 9, 10, 9), timeSpecified: true),
+      Assignment(id: 'past', courseCode: 'CSC 4330', title: 'HW 0', dueAt: DateTime(2026, 8, 28, 23, 59)),
+      const Assignment(id: 'undated', courseCode: 'CSC 4330', title: 'Final Project'),
+    ]);
+    await tester.pumpWidget(DueTodayApp(store: store, api: _offlineApi()));
+
+    await tester.tap(find.byTooltip('Add all to calendar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add 2 deadlines to your calendar?'), findsOneWidget);
+
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add 2 deadlines to your calendar?'), findsNothing);
+    expect(store.assignments.where((a) => a.addedToCalendar), isEmpty);
+  });
+
+  testWidgets('add all to calendar says when everything is already added', (tester) async {
+    _usePhoneScreen(tester);
+    final store = await _store(now);
+    await store.addAll(const Course(code: 'CSC 4330'), [
+      Assignment(id: 'up1', courseCode: 'CSC 4330', title: 'Lab 2', dueAt: DateTime(2026, 9, 3, 17)),
+    ]);
+    await store.markAllAddedToCalendar(['up1']);
+    await tester.pumpWidget(DueTodayApp(store: store, api: _offlineApi()));
+
+    await tester.tap(find.byTooltip('Add all to calendar'));
+    await tester.pump();
+    expect(find.text('Everything upcoming is already in your calendar.'), findsOneWidget);
+  });
 }

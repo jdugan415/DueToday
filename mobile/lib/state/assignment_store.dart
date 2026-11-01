@@ -90,6 +90,16 @@ class AssignmentStore extends ChangeNotifier {
   Future<void> markAddedToCalendar(String id) =>
       _modify(id, (a) => a.copyWith(addedToCalendar: true));
 
+  /// Flags every assignment in [ids] as sent to the calendar (one write).
+  Future<void> markAllAddedToCalendar(Iterable<String> ids) async {
+    final marked = ids.toSet();
+    if (marked.isEmpty) return;
+    _assignments = [
+      for (final a in _assignments) marked.contains(a.id) ? a.copyWith(addedToCalendar: true) : a,
+    ];
+    await _persist();
+  }
+
   Future<void> setShareCode(String courseCode, String shareCode) async {
     final course = _courses[courseCode];
     if (course == null) return;
