@@ -11,6 +11,8 @@ Paste a syllabus, get a prioritized assignment list, and push due dates to your 
 
 **Start with [AGENT_HANDOVER.md](AGENT_HANDOVER.md)**: it covers the architecture, the API contract, local setup, team assignments, and git rules.
 
+The public [privacy policy](docs/privacy.md) is published with GitHub Pages from [`docs/`](docs).
+
 For the live backend, use the root [Render Blueprint](render.yaml) and follow
 [the deployment guide](backend/DEPLOYMENT.md) to connect Supabase and configure Android builds.
 
