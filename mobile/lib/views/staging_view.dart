@@ -26,6 +26,7 @@ class _StagingViewState extends State<StagingView> {
   late final TextEditingController _codeController;
   final _nameController = TextEditingController();
   late List<Assignment> _items;
+  final Set<String> _reviewedDeadlines = {};
 
   /// Items already due when the screen opened. Fixed at open time so editing
   /// a date doesn't make an item vanish mid-review.
@@ -64,6 +65,10 @@ class _StagingViewState extends State<StagingView> {
 
   void _replace(Assignment updated) {
     setState(() {
+      final previous = _items.firstWhere((a) => a.id == updated.id);
+      if (previous.dueAt != updated.dueAt || previous.timeSpecified != updated.timeSpecified) {
+        _reviewedDeadlines.remove(updated.id);
+      }
       _items = [for (final a in _items) a.id == updated.id ? updated : a];
     });
   }
@@ -71,7 +76,7 @@ class _StagingViewState extends State<StagingView> {
   void _discard(Assignment item) => setState(() => _items.removeWhere((a) => a.id == item.id));
 
   Future<void> _pickDate(Assignment item) async {
-    final now = DateTime.now();
+    final now = context.read<AssignmentStore>().now();
     final picked = await showDatePicker(
       context: context,
       initialDate: item.dueAt ?? now,
@@ -190,6 +195,12 @@ class _StagingViewState extends State<StagingView> {
                 onPickDate: () => _pickDate(item),
                 onPickTime: () => _pickTime(item),
                 onDiscard: () => _discard(item),
+                deadlineReviewed: _reviewedDeadlines.contains(item.id),
+                onConfirmDeadline: () => setState(() => _reviewedDeadlines.add(item.id)),
+                onClearDeadline: () {
+                  _replace(item.copyWith(clearDueAt: true, timeSpecified: false));
+                  setState(() => _reviewedDeadlines.add(item.id));
+                },
               ),
             ),
         ],
@@ -334,6 +345,9 @@ class _StagingCard extends StatelessWidget {
     required this.onPickDate,
     required this.onPickTime,
     required this.onDiscard,
+    required this.deadlineReviewed,
+    required this.onConfirmDeadline,
+    required this.onClearDeadline,
   });
 
   final Assignment item;
@@ -342,6 +356,9 @@ class _StagingCard extends StatelessWidget {
   final VoidCallback onPickDate;
   final VoidCallback onPickTime;
   final VoidCallback onDiscard;
+  final bool deadlineReviewed;
+  final VoidCallback onConfirmDeadline;
+  final VoidCallback onClearDeadline;
 
   @override
   Widget build(BuildContext context) {
@@ -372,7 +389,7 @@ class _StagingCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (item.needsReview)
+                if (!deadlineReviewed && (item.needsReview || !item.timeSpecified))
                   Tooltip(
                     message: item.sourceLine ?? 'Please double-check this item',
                     child: Padding(
@@ -407,10 +424,49 @@ class _StagingCard extends StatelessWidget {
                     onTap: onPickTime,
                   ),
                 PriorityBadge(priority: item.priority),
-                if (isPast)
+                if (isPast && due != null)
                   Text('PAST DUE', style: theme.textTheme.labelSmall?.copyWith(color: colors.urgent)),
               ],
             ),
+            if (!deadlineReviewed && (item.needsReview || !item.timeSpecified)) ...[
+              const SizedBox(height: 10),
+              Text(
+                due == null
+                    ? 'When is this due? No deadline was found. You can set one or leave it unset.'
+                    : item.confidence < Assignment.reviewThreshold
+                        ? 'Is this deadline correct? Check the date and year against your syllabus.'
+                        : '${DateFormat('h:mm a').format(due)} assumed — please confirm or change the time.',
+                style: theme.textTheme.bodySmall?.copyWith(color: colors.warning),
+              ),
+              if (due != null && !item.timeSpecified && item.confidence < Assignment.reviewThreshold)
+                Text(
+                  '${DateFormat('h:mm a').format(due)} is an assumed time.',
+                  style: theme.textTheme.bodySmall?.copyWith(color: colors.warning),
+                ),
+              if (item.sourceLine?.trim().isNotEmpty == true) ...[
+                const SizedBox(height: 6),
+                Text('From syllabus: ${item.sourceLine}', style: theme.textTheme.bodySmall),
+              ],
+              Wrap(
+                spacing: 8,
+                children: [
+                  TextButton(
+                    onPressed: onConfirmDeadline,
+                    child: Text(due == null ? 'Keep without deadline' : 'Confirm deadline'),
+                  ),
+                  if (due != null)
+                    TextButton(onPressed: onClearDeadline, child: const Text('Leave deadline unset')),
+                ],
+              ),
+            ],
+            if (deadlineReviewed)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  due == null ? 'Saving without a deadline. You can add one later.' : 'Deadline reviewed',
+                  style: theme.textTheme.bodySmall?.copyWith(color: colors.textSecondary),
+                ),
+              ),
           ],
         ),
       ),
