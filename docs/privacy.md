@@ -5,10 +5,10 @@ title: DueToday Privacy Policy
 
 # DueToday Privacy Policy
 
-**Effective date:** November 2, 2026
-**App:** DueToday for Android (`com.duetoday.app`)
-**Developer:** TODO developer or team name as shown on Google Play
-**Contact:** TODO contact email
+- **Effective date:** November 3, 2026
+- **App:** DueToday for Android (`com.duetoday.app`)
+- **Developer:** DueToday Team
+- **Contact:** [duetoday.app@gmail.com](mailto:duetoday.app@gmail.com)
 
 DueToday turns a course syllabus into a list of assignments and lets you add
 due dates to your phone's calendar. This page explains what data the app
