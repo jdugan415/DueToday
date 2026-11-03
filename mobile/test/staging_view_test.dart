@@ -34,6 +34,55 @@ Future<(Widget, AssignmentStore)> _staging(List<Assignment> items) async {
 }
 
 void main() {
+  testWidgets('missing deadline can be acknowledged and saved unset', (tester) async {
+    _usePhoneScreen(tester);
+    final (app, store) = await _staging([_item('Project', null)]);
+    await tester.pumpWidget(app);
+    expect(find.textContaining('No deadline was found'), findsOneWidget);
+    await tester.tap(find.text('Keep without deadline'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Saving without a deadline'), findsOneWidget);
+    await tester.tap(find.text('Confirm & Add All (1)'));
+    await tester.pumpAndSettle();
+    expect(store.assignments.single.dueAt, isNull);
+  });
+
+  testWidgets('assumed time is disclosed and confirming preserves it', (tester) async {
+    _usePhoneScreen(tester);
+    final due = DateTime(2026, 11, 12, 23, 59);
+    final (app, store) = await _staging([_item('Homework', due)]);
+    await tester.pumpWidget(app);
+    expect(find.text('11:59 PM assumed — please confirm or change the time.'), findsOneWidget);
+    await tester.tap(find.text('Confirm deadline'));
+    await tester.pumpAndSettle();
+    expect(find.text('Deadline reviewed'), findsOneWidget);
+    await tester.tap(find.text('Confirm & Add All (1)'));
+    await tester.pumpAndSettle();
+    expect(store.assignments.single.dueAt, due);
+    expect(store.assignments.single.timeSpecified, isFalse);
+  });
+
+  testWidgets('uncertain deadline shows source and can be removed before saving', (tester) async {
+    _usePhoneScreen(tester);
+    final (app, store) = await _staging([
+      Assignment(
+        id: 'project', courseCode: 'CSC 3730', title: 'Project',
+        dueAt: DateTime(2026, 11, 12, 23, 59), confidence: 0.6,
+        sourceLine: 'Project due next Thursday',
+      ),
+    ]);
+    await tester.pumpWidget(app);
+    expect(find.textContaining('Check the date and year'), findsOneWidget);
+    expect(find.text('From syllabus: Project due next Thursday'), findsOneWidget);
+    expect(find.text('11:59 PM is an assumed time.'), findsOneWidget);
+    await tester.tap(find.text('Leave deadline unset'));
+    await tester.pumpAndSettle();
+    expect(find.text('Set date'), findsOneWidget);
+    await tester.tap(find.text('Confirm & Add All (1)'));
+    await tester.pumpAndSettle();
+    expect(store.assignments.single.dueAt, isNull);
+  });
+
   final semester = [
     _item('Quiz 1', DateTime(2026, 9, 8, 23, 59)),
     _item('HW 2', DateTime(2026, 9, 27, 23, 59)),

@@ -79,6 +79,9 @@ Add a pytest case to `backend/test_parser.py` for every parser change or bug rep
 > - **PDF syllabus upload** is complete: `POST /api/parse-pdf` and the "Or upload syllabus PDF" card on the paste screen. The real Dart client was verified against the real server with generated PDFs.
 
 ### ✅ Implemented
+
+- **2026-11-03 deadline review prompts:** StagingView explains missing dates, low-confidence deadlines, and assumed times with the original syllabus line. Students can confirm a deadline or explicitly leave it unset before saving. Review acknowledgments last for the import session and reset when date/time changes; confirmations do not rewrite parser confidence or time provenance. This uses existing parser metadata; class-weekday clarification and detecting every inferred year remain future work.
+  Validation: 56 Flutter tests and 110 backend tests pass; Flutter analysis reports no issues. No physical-device check performed for these prompts.
 - **2026-11-02 privacy policy page (§7 B4):** `docs/privacy.md`, with `docs/index.md` and `docs/_config.yml`, is the Play-required privacy policy, published with GitHub Pages from `/docs` on `main`. Docs only: no code or dependency changes. Still 🧑: fill in the developer name and contact email, enable Pages in repo Settings, then paste the live URL into §7 B4 and into Play Console → App content → Privacy policy.
 
 - **2026-11-01 add all to calendar:** one-tap `.ics` export of upcoming deadlines from the dashboard (row below). Written without a local Flutter toolchain: run `flutter analyze && flutter test` before merging.
