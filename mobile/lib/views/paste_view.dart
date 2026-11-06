@@ -44,8 +44,11 @@ class _PasteViewState extends State<PasteView> {
 
   /// Non-null while a request is running; describes what's happening.
   String? _busy;
+  bool _picking = false;
+  String? _error;
+  Future<void> Function()? _retry;
 
-  bool get _loading => _busy != null;
+  bool get _loading => _busy != null || _picking;
 
   @override
   void dispose() {
@@ -62,6 +65,7 @@ class _PasteViewState extends State<PasteView> {
   }
 
   Future<void> _parseText() async {
+    if (_loading) return;
     final raw = _textController.text.trim();
     if (raw.isEmpty) return;
     final api = context.read<ApiService>();
@@ -73,16 +77,20 @@ class _PasteViewState extends State<PasteView> {
   }
 
   Future<void> _uploadPdf() async {
+    if (_loading) return;
     final api = context.read<ApiService>();
     final today = context.read<AssignmentStore>().now();
     final messenger = ScaffoldMessenger.of(context);
 
     final PickedPdf? picked;
+    setState(() => _picking = true);
     try {
       picked = await widget.pickPdf();
     } on PlatformException catch (error) {
       messenger.showSnackBar(SnackBar(content: Text('Could not open the file: ${error.message ?? error.code}')));
       return;
+    } finally {
+      if (mounted) setState(() => _picking = false);
     }
     if (picked == null || !mounted) return; // user backed out of the picker
 
@@ -105,20 +113,24 @@ class _PasteViewState extends State<PasteView> {
 
   /// Shows progress while [request] runs, then opens the review screen.
   Future<void> _run(String status, Future<ParseResult> Function() request) async {
-    final messenger = ScaffoldMessenger.of(context);
-    setState(() => _busy = status);
+    if (_loading || !mounted) return;
+    setState(() {
+      _busy = status;
+      _error = null;
+      _retry = null;
+    });
     try {
       final result = await request();
       if (!mounted) return;
-      setState(() => _busy = null);
       await Navigator.of(context).push(
         MaterialPageRoute<void>(builder: (_) => StagingView(result: result)),
       );
     } on ApiException catch (error) {
-      messenger.showSnackBar(SnackBar(
-        content: Text(error.message),
-        duration: const Duration(seconds: 6),
-      ));
+      if (!mounted) return;
+      setState(() {
+        _error = error.message;
+        _retry = status == 'Parsing schedule…' ? _parseText : () => _run(status, request);
+      });
     } finally {
       if (mounted && _busy != null) setState(() => _busy = null);
     }
@@ -164,6 +176,27 @@ class _PasteViewState extends State<PasteView> {
               const SizedBox(height: 12),
               _PdfUploadCard(busy: _busy, onChoose: _loading ? null : _uploadPdf),
               const SizedBox(height: 12),
+              if (_error != null) ...[
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(_error!, style: Theme.of(context).textTheme.bodyMedium),
+                        const SizedBox(height: 4),
+                        const Text('Your syllabus and course code are still here.'),
+                        TextButton.icon(
+                          onPressed: _loading ? null : _retry,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               Expanded(
                 child: TextField(
                   controller: _textController,
