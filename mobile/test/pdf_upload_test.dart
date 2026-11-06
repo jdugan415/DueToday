@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -5,6 +6,7 @@ import 'package:due_today/services/api_service.dart';
 import 'package:due_today/services/storage_service.dart';
 import 'package:due_today/state/assignment_store.dart';
 import 'package:due_today/views/paste_view.dart';
+import 'package:due_today/views/staging_view.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -51,6 +53,66 @@ Future<Widget> _app({required ApiService api, required Future<PickedPdf?> Functi
 }
 
 void main() {
+  testWidgets('network failure preserves text and code; retry opens Review once', (tester) async {
+    var calls = 0;
+    final retryResponse = Completer<http.Response>();
+    final bodies = <Map<String, dynamic>>[];
+    final api = ApiService(baseUrl: 'http://test', client: MockClient((request) async {
+      calls++;
+      bodies.add(jsonDecode(request.body) as Map<String, dynamic>);
+      if (calls == 1) throw http.ClientException('Connection refused');
+      return retryResponse.future;
+    }));
+    await tester.pumpWidget(await _app(api: api, pick: () async => null));
+    await tester.enterText(find.byType(TextField).at(0), 'CSC 4330');
+    await tester.enterText(find.byType(TextField).at(1), 'Nov 12 Homework 1');
+    await tester.tap(find.text('Parse Schedule'));
+    await tester.pumpAndSettle();
+    expect(find.text('Your syllabus and course code are still here.'), findsOneWidget);
+    expect(tester.widget<TextField>(find.byType(TextField).at(1)).controller!.text, 'Nov 12 Homework 1');
+    expect(tester.widget<TextField>(find.byType(TextField).at(0)).controller!.text, 'CSC 4330');
+    final retry = tester.widget<TextButton>(find.widgetWithText(TextButton, 'Retry')).onPressed!;
+    retry();
+    retry(); // A second callback before the next frame must not send another request.
+    await tester.pump();
+    expect(calls, 2);
+    for (final body in bodies) {
+      expect(body['raw_text'], 'Nov 12 Homework 1');
+      expect(body['course_code'], 'CSC 4330');
+    }
+    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Parse Schedule')).onPressed, isNull);
+    retryResponse.complete(http.Response(jsonEncode(_parseResponse()), 200));
+    await tester.pumpAndSettle();
+    expect(find.byType(StagingView), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byType(StagingView), findsNothing);
+    expect(find.text('Retry'), findsNothing);
+    expect(calls, 2);
+  });
+
+  testWidgets('PDF retry reuses selected bytes without reopening picker', (tester) async {
+    var picks = 0;
+    var calls = 0;
+    final api = ApiService(baseUrl: 'http://test', client: MockClient((request) async {
+      calls++;
+      expect(utf8.decode(request.bodyBytes, allowMalformed: true), contains('%PDF-1.4 fake syllabus'));
+      if (calls == 1) throw http.ClientException('Connection refused');
+      return http.Response(jsonEncode(_parseResponse()), 200);
+    }));
+    await tester.pumpWidget(await _app(api: api, pick: () async {
+      picks++;
+      return (name: 'schedule.pdf', bytes: _fakePdf);
+    }));
+    await tester.tap(find.text('Choose File'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+    expect(picks, 1);
+    expect(calls, 2);
+    expect(find.byType(StagingView), findsOneWidget);
+  });
+
   group('ApiService.parseSyllabusPdf', () {
     test('sends a multipart upload with the form fields', () async {
       late http.Request sent;
