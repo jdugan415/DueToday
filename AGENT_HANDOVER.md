@@ -79,6 +79,8 @@ Add a pytest case to `backend/test_parser.py` for every parser change or bug rep
 > - **PDF syllabus upload** is complete: `POST /api/parse-pdf` and the "Or upload syllabus PDF" card on the paste screen. The real Dart client was verified against the real server with generated PDFs.
 
 ### ✅ Implemented
+- - **2026-11-09 hyphenated schedule dates:** `_NUMERIC_DATE_RE` now accepts `7-20` / `7-20-2026` alongside `7/20`, and `_RANGE_NOUN_BEFORE_RE` keeps `Chapters 1-7`, `pp. 10-25`, `Questions 3-8` from being read as dates. Found by running the parser on 5 real LSU syllabi: BIOL 1005's table uses `M-D` for every row and produced 0 dated items before; after, all 10 labs (10:30 start), both writing assignments, and the final parse. POLI 2051's `Chapters 1-7` / `8-18` still resolve to the correct June exam dates. Parser only; no API or app change.
+    Validation: 91 parser tests pass (4 new in `test_parser.py`: hyphen date, hyphen date with year, chapter/page/question ranges, mixed separators). No Flutter changes.
 
 - **2026-11-05 parsing retry:** PasteView keeps syllabus text and course code after API errors and displays a persistent error with Retry. Text retries use the current fields; PDF retries reuse selected bytes without reopening the picker. Input survives while the screen stays open, not app restarts. Request guards cover file picking, parsing, and navigation to Review to prevent duplicate requests/routes.
   Validation: all 58 Flutter tests and 110 backend tests pass; Flutter analysis reports no issues. Regression tests cover failed text/PDF requests, preserved input, repeated retry taps, and a single Review route. No device test performed.

@@ -49,8 +49,17 @@ _WEEKDAY_PATTERN = (
 # --- dates -----------------------------------------------------------------
 _ISO_DATE_RE = re.compile(r"(?<!\d)(?P<year>20\d{2})-(?P<month>\d{1,2})-(?P<day>\d{1,2})(?!\d)")
 _NUMERIC_DATE_RE = re.compile(
-    r"(?<![\d/.])(?P<month>\d{1,2})/(?P<day>\d{1,2})(?:/(?P<year>\d{4}|\d{2}))?(?![\d/])"
+    r"(?<![\d/.\-])(?P<month>\d{1,2})(?P<sep>[/-])(?P<day>\d{1,2})"
+    r"(?:(?P=sep)(?P<year>\d{4}|\d{2}))?(?![\d/\-])"
 )
+# "Chapters 1-7", "pp. 10-25", "Questions 3-8": a hyphenated pair after one of
+# these nouns is a range, not a date. Slash dates are never affected.
+_RANGE_NOUN_BEFORE_RE = re.compile(
+    r"\b(?:ch(?:apter)?s?|chs|sections?|secs?|units?|modules?|weeks?|wks?|pages?|pp|p|"
+    r"problems?|questions?|exercises?|lessons?|parts?|days?|items?|nos?|numbers?|#)\.?\s*$",
+    re.IGNORECASE,
+)
+
 _MONTH_DATE_RE = re.compile(
     rf"\b(?P<month>{_MONTH_PATTERN})\.?\s+(?P<day>\d{{1,2}})(?:st|nd|rd|th)?(?!\w)"
     r"(?:,?\s+(?P<year>20\d{2})(?!\d))?",
@@ -504,6 +513,12 @@ def _find_explicit_dates(line: str, reference: date) -> list[_DateHit]:
     hits: list[_DateHit] = []
     for regex in (_ISO_DATE_RE, _NUMERIC_DATE_RE, _MONTH_DATE_RE):
         for m in regex.finditer(line):
+            if (
+                regex is _NUMERIC_DATE_RE
+                and m.group("sep") == "-"
+                and _RANGE_NOUN_BEFORE_RE.search(line[max(0, m.start() - 12) : m.start()])
+            ):
+                continue
             value = _date_from_match(m, reference)
             if value is None or _overlaps(m.start(), m.end(), hits):
                 continue
