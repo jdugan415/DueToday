@@ -34,6 +34,16 @@ def syllabus_pdf() -> bytes:
     return make_pdf([[(72, 760, "CSC 4330 - Software Systems")] + table_rows(SCHEDULE)])
 
 
+def test_pdf_word_tabs_preserve_exam_number_and_date(client):
+    # Synthetic layout reproducing tab-encoded word spaces in a public PDF.
+    data = make_pdf([[(72, 720, 'October\t22nd\t(Thu.)'), (300, 720, 'Exam\t2')]])
+    response = upload(client, data)
+    assert response.status_code == 200
+    tasks = response.json()['tasks']
+    assert [(t['title'], t['due_date']) for t in tasks] == [('Exam 2', '2026-10-22')]
+    assert tasks[0]['time_specified'] is False
+
+
 def test_parses_a_schedule_table(client):
     response = upload(client, syllabus_pdf())
     assert response.status_code == 200

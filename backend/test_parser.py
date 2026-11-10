@@ -373,3 +373,60 @@ def test_ids_are_stable():
     first = parse("9/28 Midterm Exam", course_code="CSC 4330").tasks[0].id
     second = parse("9/28 Midterm Exam", course_code="CSC 4330").tasks[0].id
     assert first == second and len(first) == 12
+
+
+# Synthetic reproductions of patterns audited in five public syllabi.
+# Source links and audit limits: PARSER_ACCURACY.md. No source syllabus text.
+@pytest.mark.parametrize(
+    ('text', 'expected'),
+    [
+        pytest.param('PSYC 2100\nOctober 22nd (Thu.)   Exam 2\nNovember 5th (Thu.)   Exam 3',
+                     [('Exam 2', '2026-10-22', '23:59'), ('Exam 3', '2026-11-05', '23:59')], id='psychology-ordinal-table'),
+        pytest.param('CHEM 2100\nExam 2   Monday, October 19\nFinal Exam   December 14 at 9:00 AM',
+                     [('Exam 2', '2026-10-19', '23:59'), ('Final Exam', '2026-12-14', '09:00')], id='chemistry-exam-table'),
+        pytest.param('HIST 2100\nWeek 4: Revolution - September 14-18\nQuiz 4 due September 18 at 10pm\nEssay Two due October 9 at noon',
+                     [('Quiz 4', '2026-09-18', '22:00'), ('Essay Two', '2026-10-09', '12:00')], id='history-weekly-prose'),
+        pytest.param('BIOL 2100\n23-Oct NO CLASS - Exam 2 (Oct 22 - Oct 23)\n30-Oct NO CLASS - Fall Break',
+                     [('Exam 2', '2026-10-23', '23:59')], id='biology-testing-window'),
+        pytest.param('PSYC 2200\nSeptember 21   Smart Book Assignments Ch. 5 - 6 due 10pm\nSeptember 23   Exam Review\nSeptember 25   Exam #2',
+                     [('Smart Book Assignments Ch. 5 - 6', '2026-09-21', '22:00'), ('Exam #2', '2026-09-25', '23:59')], id='psychology-numbered-group'),
+    ],
+)
+def test_audited_schedule_patterns(text, expected):
+    result = parse(text)
+    assert [(t.title, t.due_date.isoformat(), t.due_time) for t in result.tasks] == expected
+
+
+def test_testing_window_is_flagged_for_deadline_review():
+    task = only_task('23-Oct NO CLASS - Exam 2 (Oct 22 - Oct 23)')
+    assert task.confidence < 0.8
+    assert task.time_specified is False
+
+
+@pytest.mark.parametrize('text', ['Labs (10%)', 'Assignments must be submitted online.', 'Quizzes will be posted weekly.'])
+def test_plural_policy_categories_still_do_not_become_tasks(text):
+    assert parse(text).tasks == []
+
+
+def test_day_first_date_and_points():
+    task = only_task('23-Oct-2026 Quiz 5 (15 pts) at 2pm')
+    assert task.due_date == date(2026, 10, 23)
+    assert task.points == 15
+    assert task.due_time == '14:00'
+
+
+def test_week_range_is_not_a_confident_exact_deadline():
+    task = only_task('10/19-10/23   Quiz 4')
+    assert task.due_date == date(2026, 10, 23)
+    assert task.confidence < 0.8
+
+
+def test_exam_window_end_wins_over_no_class_meeting_date():
+    assert only_task('21-Oct NO CLASS - Exam 2 (Oct 20 - Oct 23)').due_date == date(2026, 10, 23)
+
+
+def test_exact_exam_date_supersedes_weekly_overview_without_merging_distinct_exams():
+    result = parse('10/19-10/23   Exam 2\nExam 2   October 21 at 9am\nExam 3   November 4')
+    assert [(t.title, t.due_date) for t in result.tasks] == [
+        ('Exam 2', date(2026, 10, 21)), ('Exam 3', date(2026, 11, 4)),
+    ]
