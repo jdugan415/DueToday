@@ -56,6 +56,10 @@ _MONTH_DATE_RE = re.compile(
     r"(?:,?\s+(?P<year>20\d{2})(?!\d))?",
     re.IGNORECASE,
 )
+_DAY_MONTH_RE = re.compile(
+    rf'(?<![\w/-])(?P<day>\d{{1,2}})(?:st|nd|rd|th)?[- ](?P<month>{_MONTH_PATTERN})'
+    r'\b(?:[- ,]+(?P<year>20\d{2})(?!\d))?', re.IGNORECASE,
+)
 _WEEKDAY_RE = re.compile(
     rf"\b(?:(?P<mod>next|this)\s+)?(?P<day>{_WEEKDAY_PATTERN})\b\.?", re.IGNORECASE
 )
@@ -131,6 +135,10 @@ _SKIP_LINE_RE = re.compile(
     r"thanksgiving|office\s+hours|reading\s+day)\b",
     re.IGNORECASE,
 )
+_NO_CLASS_EXAM_RE = re.compile(
+    r'\bno\s+class(?:es)?\s*[-:–—]\s*(?:(?:final|midterm)\s+)?exam(?:ination)?\b', re.IGNORECASE,
+)
+_NUMBERED_GROUP_RE = re.compile(r'\s+(?:#?\d|Ch(?:apters?)?\.?\s*\d)', re.IGNORECASE)
 
 # --- titles ----------------------------------------------------------------
 _BULLET_RE = re.compile(r"^\s*(?:[-*•●▪◦‣>]+|\(?\d{1,2}[.)])\s+")
@@ -139,7 +147,7 @@ _DUE_PREFIX_RE = re.compile(
     re.IGNORECASE,
 )
 _TITLE_STOP_RE = re.compile(
-    r"\s+(?:is\s+)?(?:due|by|worth|deadline|submit(?:ted)?)\b|[;|()\[\]{}\t]|\s[-–—]\s*(?=\d)|,\s*(?=\d)|\s{3,}",
+    r"\s+(?:is\s+)?(?:due|by|worth|deadline|submit(?:ted)?)\b|[;|()\[\]{}\t]|,\s*(?=\d)|\s{3,}",
     re.IGNORECASE,
 )
 _TRAILING_JUNK_RE = re.compile(
@@ -202,6 +210,7 @@ class _Draft:
     points: int | None
     confidence: float
     source_line: str
+    window_start: date | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +238,7 @@ def parse_syllabus(
 
     for raw_line in raw_text.splitlines():
         line = _BULLET_RE.sub("", raw_line).strip()
-        if not line or _SKIP_LINE_RE.search(line):
+        if not line or (_SKIP_LINE_RE.search(line) and not _NO_CLASS_EXAM_RE.search(line)):
             continue
         drafts.extend(_parse_line(line, reference, context))
     drafts = _consolidate(drafts)
@@ -307,6 +316,15 @@ def _consolidate(drafts: list[_Draft]) -> list[_Draft]:
 
     kept: list[_Draft] = []
     for draft in drafts:
+        if draft.window_start is not None and any(
+            other is not draft and other.window_start is None
+            and other.due_date is not None
+            and draft.window_start <= other.due_date <= draft.due_date
+            and _title_key(other.title) == _title_key(draft.title)
+            for other in drafts
+        ):
+            # The precise exam table supersedes its weekly overview row.
+            continue
         if draft.due_date is None:
             twin = dated.get(_title_key(draft.title))
             if twin is not None:
@@ -440,6 +458,9 @@ def _build_drafts(
         due_date = hit.value if hit else None
         if hit and hit.relative:
             confidence -= 0.2
+        if (hit and hit.anchor != hit.value) or _NO_CLASS_EXAM_RE.search(line):
+            # A week or testing window is not an exact assignment deadline.
+            confidence = min(confidence, 0.75)
         if hit is None and context.due is not None and _may_inherit_context(line, measures, title, match):
             due_date, confidence = context.due, 0.7
 
@@ -454,6 +475,7 @@ def _build_drafts(
                 points=int(points) if points is not None else None,
                 confidence=confidence,
                 source_line=line,
+                window_start=hit.anchor if hit and hit.anchor != hit.value else None,
             )
         )
     return drafts
@@ -463,7 +485,7 @@ def _is_announcement(line: str, match: re.Match[str]) -> bool:
     """True when a keyword match is not a deliverable (announcement, category, prose)."""
     keyword = " ".join(match.group("kw").lower().split())
     # Deliverables are singular ("Quiz 3"); "Quizzes" / "Labs" name categories.
-    if keyword.endswith("s") and keyword != "hw":
+    if keyword.endswith("s") and keyword != "hw" and not _NUMBERED_GROUP_RE.match(line, match.end()):
         return True
     if keyword == "final" and not _BARE_FINAL_OK_RE.match(line, match.end()):
         return True
@@ -502,7 +524,7 @@ def _may_inherit_context(
 
 def _find_explicit_dates(line: str, reference: date) -> list[_DateHit]:
     hits: list[_DateHit] = []
-    for regex in (_ISO_DATE_RE, _NUMERIC_DATE_RE, _MONTH_DATE_RE):
+    for regex in (_ISO_DATE_RE, _NUMERIC_DATE_RE, _MONTH_DATE_RE, _DAY_MONTH_RE):
         for m in regex.finditer(line):
             value = _date_from_match(m, reference)
             if value is None or _overlaps(m.start(), m.end(), hits):
@@ -581,6 +603,11 @@ def _pick_date(
     """
     in_seg = [h for h in dates if kw_start <= h.start < seg_end]
     in_prev = [h for h in dates if prev_start <= h.start and h.end <= kw_start]
+
+    if _NO_CLASS_EXAM_RE.search(line):
+        windows = [h for h in in_seg if h.anchor != h.value]
+        if windows:
+            return windows[0], 'primary'
 
     for hit in in_seg:
         if _DUE_PREFIX_RE.search(line[max(0, hit.start - 24) : hit.start]):

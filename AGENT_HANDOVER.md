@@ -80,6 +80,9 @@ Add a pytest case to `backend/test_parser.py` for every parser change or bug rep
 
 ### ✅ Implemented
 
+- **2026-11-10 parser accuracy pass:** audited schedule sections from five public university syllabi; source links, scope, and unresolved findings are in `backend/PARSER_ACCURACY.md`. Fixed tab-encoded PDF word spaces, day-first month dates, exam rows marked “no class,” numbered plural task groups, and exact exam dates superseding weekly windows. Window-derived dates now request review (confidence < 0.8). Added synthetic parser and generated-PDF regressions; no real source syllabi added. Wrapped cells, broader task vocabulary, policy false positives, and conflicting source dates still need work, so the original whole-document accuracy task remains open.
+  Validation: 124 backend tests and 58 Flutter tests pass; Flutter analysis reports no issues. No live deployment or physical-device test performed.
+
 - **2026-11-05 parsing retry:** PasteView keeps syllabus text and course code after API errors and displays a persistent error with Retry. Text retries use the current fields; PDF retries reuse selected bytes without reopening the picker. Input survives while the screen stays open, not app restarts. Request guards cover file picking, parsing, and navigation to Review to prevent duplicate requests/routes.
   Validation: all 58 Flutter tests and 110 backend tests pass; Flutter analysis reports no issues. Regression tests cover failed text/PDF requests, preserved input, repeated retry taps, and a single Review route. No device test performed.
 

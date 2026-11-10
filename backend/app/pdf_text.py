@@ -86,7 +86,11 @@ def rejoin_hyphenated_cells(text: str) -> str:
 
 def _page_text(page) -> str:
     try:
-        return page.extract_text(extraction_mode="layout")
+        text = page.extract_text(extraction_mode="layout") or ""
     except Exception:
         # Layout mode is stricter about odd fonts; plain mode still gets the words.
-        return page.extract_text() or ""
+        text = page.extract_text() or ""
+    # Some PDFs encode ordinary word spaces as literal tabs (e.g. Exam<TAB>2).
+    # Layout mode already supplies wide space gaps between positioned cells.
+    # Preserve those gaps, but avoid treating intra-word tabs as cell boundaries.
+    return text.replace('\t', ' ')
