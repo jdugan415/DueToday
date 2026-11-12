@@ -39,20 +39,18 @@ class AssignmentStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Adds (or replaces, matched by id) assignments for [course]. Re-parsing
-  /// the same syllabus therefore updates items instead of duplicating them.
+  /// Adds new assignments for [course], keeping saved assignments on ID matches.
   Future<void> addAll(Course course, List<Assignment> items) async {
     final existing = _courses[course.code];
     _courses[course.code] = existing == null
         ? course.copyWith(colorIndex: courseColorIndexFor(course.code))
         : existing.copyWith(name: course.name, shareCode: course.shareCode);
 
-    final incoming = {for (final item in items) item.id: item.copyWith(courseCode: course.code)};
-    _assignments = [
-      for (final a in _assignments)
-        if (!incoming.containsKey(a.id)) a,
-      ...incoming.values,
-    ];
+    final byId = {for (final item in _assignments) item.id: item};
+    for (final item in items) {
+      byId.putIfAbsent(item.id, () => item.copyWith(courseCode: course.code));
+    }
+    _assignments = byId.values.toList();
     await _persist();
   }
 

@@ -52,7 +52,7 @@ The app never reads or writes the calendar itself. Tapping the calendar icon on 
 ### Offline-first state strategy
 - `AssignmentStore` (`lib/state/assignment_store.dart`, a `ChangeNotifier` exposed with `provider`) holds every `Assignment` and `Course`. Every mutation calls `_persist()`, which notifies listeners and writes JSON to SharedPreferences (`assignments_v1`, `courses_v1`).
 - The network is needed only to **parse** new text and to **share/import** class codes. Everything else (dashboard, completing, deleting, calendar export) works in airplane mode.
-- `addAll` upserts by `id`. Parser IDs are a stable hash of `course|title|date`, so re-parsing the same syllabus updates items instead of duplicating them.
+- `addAll` keeps saved assignments on ID matches and adds unseen IDs. Parser IDs are a stable hash of `course|title|date`, so re-parsing the same syllabus preserves local edits without duplicating matching items.
 - Storage keys are versioned (`_v1`). If you change the persisted shape incompatibly, bump to `_v2` and write a migration in `StorageService`. Don't silently break existing installs.
 
 ### Parser strategy (backend/app/parser.py)
@@ -290,7 +290,7 @@ Response `201`:
 - `404 {"detail": "No course found for code H4PSD"}`
 - `422 {"detail": "Share codes are 5 letters/digits"}` for malformed codes.
 
-The app turns imported tasks into local assignments with id `shared-<CODE>-<task id>`, so re-importing the same code updates instead of duplicating.
+The app turns imported tasks into local assignments with id `shared-<CODE>-<task id>`, so re-importing the same code keeps matching local assignments and adds unseen items.
 
 ### `GET /api/courses/{code}/calendar.ics`: subscribable calendar feed
 - `200`, `Content-Type: text/calendar; charset=utf-8`, CRLF line endings. Same 404/422 rules as above.
