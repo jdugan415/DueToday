@@ -52,7 +52,7 @@ The app never reads or writes the calendar itself. Tapping the calendar icon on 
 ### Offline-first state strategy
 - `AssignmentStore` (`lib/state/assignment_store.dart`, a `ChangeNotifier` exposed with `provider`) holds every `Assignment` and `Course`. Every mutation calls `_persist()`, which notifies listeners and writes JSON to SharedPreferences (`assignments_v1`, `courses_v1`).
 - The network is needed only to **parse** new text and to **share/import** class codes. Everything else (dashboard, completing, deleting, calendar export) works in airplane mode.
-- `addAll` upserts by `id`. Parser IDs are a stable hash of `course|title|date`, so re-parsing the same syllabus updates items instead of duplicating them.
+- `addAll` keeps saved assignments on ID matches and adds unseen IDs. Parser IDs are a stable hash of `course|title|date`, so re-parsing the same syllabus preserves local edits without duplicating matching items.
 - Class-code imports go through `importShared`, not `addAll`. It never overwrites a local item: an incoming task is skipped when its id is already on the phone (same code imported again) or when the same course already has an item with the same title (case- and whitespace-insensitive) on the same due day (the student parsed the syllabus too, or the sharer pressed "New code"). Skipped items keep their completed and calendar state. It returns how many were added, and the import snackbar reports both counts.
 - Storage keys are versioned (`_v1`). If you change the persisted shape incompatibly, bump to `_v2` and write a migration in `StorageService`. Don't silently break existing installs.
 
