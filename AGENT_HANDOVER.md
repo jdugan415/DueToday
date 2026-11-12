@@ -53,6 +53,7 @@ The app never reads or writes the calendar itself. Tapping the calendar icon on 
 - `AssignmentStore` (`lib/state/assignment_store.dart`, a `ChangeNotifier` exposed with `provider`) holds every `Assignment` and `Course`. Every mutation calls `_persist()`, which notifies listeners and writes JSON to SharedPreferences (`assignments_v1`, `courses_v1`).
 - The network is needed only to **parse** new text and to **share/import** class codes. Everything else (dashboard, completing, deleting, calendar export) works in airplane mode.
 - `addAll` upserts by `id`. Parser IDs are a stable hash of `course|title|date`, so re-parsing the same syllabus updates items instead of duplicating them.
+- Class-code imports go through `importShared`, not `addAll`. It never overwrites a local item: an incoming task is skipped when its id is already on the phone (same code imported again) or when the same course already has an item with the same title (case- and whitespace-insensitive) on the same due day (the student parsed the syllabus too, or the sharer pressed "New code"). Skipped items keep their completed and calendar state. It returns how many were added, and the import snackbar reports both counts.
 - Storage keys are versioned (`_v1`). If you change the persisted shape incompatibly, bump to `_v2` and write a migration in `StorageService`. Don't silently break existing installs.
 
 ### Parser strategy (backend/app/parser.py)
@@ -80,6 +81,13 @@ Add a pytest case to `backend/test_parser.py` for every parser change or bug rep
 
 ### ✅ Implemented
 
+- **2026-11-12 code-review fixes (ECC Flutter/Dart review):**
+  1. *Shared courses keep date-only deadlines date-only.* `time_specified` is now sent in `POST /api/courses`, stored in a new `tasks.time_specified` column (Alembic `0002`, server default `true`), and returned by `GET /api/courses/{code}`. Before, every imported dated item showed the parser's fallback 11:59 PM as if the syllabus said so. Rows shared earlier, and older app versions that don't send the flag, default to `true`, which is the old behavior.
+  2. *Importing a class code no longer duplicates the student's own items.* See `importShared` in §1.
+  3. *Malformed server responses show an error instead of hanging.* `ApiService._decode` turns `TypeError`/`FormatException` from response parsing into `ApiException` (parse, PDF parse, share, import). Parse `warnings` are copied into a real list so a bad value fails up front, not during a later build. The import dialog clears its spinner in `finally`.
+  4. *The dashboard follows the clock.* `DashboardView` rebuilds once a minute and on app resume (`WidgetsBindingObserver`; the timer stops while paused), so countdowns, the Overdue/Due Today/This Week sections and the header date stay current.
+  Validation: `flutter analyze` reports no issues and all 70 Flutter tests pass (12 new: `test/share_import_test.dart` and a clock/resume dashboard test in `widget_test.dart`). **Backend tests were not run locally** (pip is broken on the dev Mac's Homebrew Python and Docker was down). The new `test_share_round_trips_time_specified` and `test_migrations.py` check `0002`, so CI is the first run. No device test performed. Deploying `main` applies `0002` to Supabase automatically (`alembic upgrade head` on start). A local SQLite `backend/duetoday.db` made by `create_all` before this change lacks the column: delete it and it will be recreated.
+
 - **2026-11-10 parser accuracy pass:** audited schedule sections from five public university syllabi; source links, scope, and unresolved findings are in `backend/PARSER_ACCURACY.md`. Fixed tab-encoded PDF word spaces, day-first month dates, exam rows marked “no class,” numbered plural task groups, and exact exam dates superseding weekly windows. Window-derived dates now request review (confidence < 0.8). Added synthetic parser and generated-PDF regressions; no real source syllabi added. Wrapped cells, broader task vocabulary, policy false positives, and conflicting source dates still need work, so the original whole-document accuracy task remains open.
   Validation: 124 backend tests and 58 Flutter tests pass; Flutter analysis reports no issues. No live deployment or physical-device test performed.
 
@@ -103,18 +111,18 @@ Add a pytest case to `backend/test_parser.py` for every parser change or bug rep
 | `.ics` calendar feed | `backend/app/ics.py`, `main.py` | `GET /api/courses/{code}/calendar.ics`: RFC 5545, floating local times, escaped text, 75-octet line folding, stable UIDs, 6 h refresh hint. Undated tasks are skipped. |
 | Rate limiting | `backend/app/ratelimit.py` | In-memory sliding window per client IP → `429` + `Retry-After`. Defaults: parse 30/min, share 20/h, lookups (JSON + .ics) 60/min. Env-tunable. |
 | DB connector | `database.py` | `DATABASE_URL` → Postgres via psycopg 3 (Supabase-pooler-safe: `prepare_threshold=None`); fallback `sqlite:///./duetoday.db`. |
-| Migrations | `backend/alembic.ini`, `backend/migrations/` | Alembic baseline `0001` = current schema. The Docker image runs `alembic upgrade head` before starting. `create_all` runs only for SQLite. `test_migrations.py` fails if models and migrations drift. |
+| Migrations | `backend/alembic.ini`, `backend/migrations/` | Alembic baseline `0001`; `0002` adds `tasks.time_specified` (boolean, not null, server default true). The Docker image runs `alembic upgrade head` before starting. `create_all` runs only for SQLite. `test_migrations.py` fails if models and migrations drift. |
 | API tests | `backend/test_api.py`, `conftest.py` | In-memory SQLite via dependency override; rate limiters reset between tests. |
 | Docker | `backend/Dockerfile` | Python 3.12-slim, non-root, honours `$PORT`, trusts proxy headers so rate limits see real client IPs. |
 | Models | `mobile/lib/models/*.dart` | `Assignment`, `Course`, `ShareCode`, `DashboardBuckets` (Overdue / Due Today / This Week / Later / No Date / Completed). |
-| API client | `lib/services/api_service.dart` | 60 s timeout for free-tier cold starts; FastAPI `detail` surfaced as `ApiException.message`. Sends the device's date as `reference_date`. |
+| API client | `lib/services/api_service.dart` | 60 s timeout for free-tier cold starts; FastAPI `detail` surfaced as `ApiException.message`. Sends the device's date as `reference_date`. Response bodies that break the contract (missing field, wrong type, bad date) become an `ApiException` via `_decode`, so screens show their normal error and Retry. |
 | Calendar | `lib/services/calendar_service.dart` | Intent delegation as specified; `buildEvent` is unit-tested. |
 | Storage | `lib/services/storage_service.dart` | SharedPreferences JSON; corrupt cache → empty list + `debugPrint`. |
-| State | `lib/state/assignment_store.dart` | Upsert, update, remove, toggle complete, calendar flag, share code. Injectable clock for tests. |
+| State | `lib/state/assignment_store.dart` | Upsert, update, remove, toggle complete, calendar flag, share code, `importShared` (de-duplicating class-code import, see §1). Injectable clock for tests. |
 | PDF upload | `lib/views/paste_view.dart`, `lib/services/api_service.dart` | "Or upload syllabus PDF" card → system document picker (`file_picker` 13 / `android_file_picker` 2.1, Storage Access Framework, **no storage permission**) → `ApiService.parseSyllabusPdf` (multipart, 120 s timeout, 10 MB client-side check) → same review screen as pasted text. A `LinearProgressIndicator` plus a "Reading <file>…" status show during upload. `PasteView(pickPdf: …)` is injectable for tests. |
 | Past items on import | `lib/views/staging_view.dart` | Items already due when the review screen opens are **left out by default**, so a mid-semester import doesn't flood Overdue. A banner ("12 items are already past due") has a switch to include them; included ones are marked "Past due". The past set is fixed when the screen opens, so editing a date never makes an item vanish. Undated items always stay. If *everything* is past (an old syllabus), they're included by default. Tested in `test/staging_view_test.dart`. |
 | Screens | `lib/views/paste_view.dart`, `staging_view.dart`, `dashboard_view.dart`, `edit_assignment_view.dart` | Paste (clipboard button, sample schedule, PDF upload) → staging (edit title, date/time pickers, swipe to delete, review warnings, course code/name) → dashboard → edit screen (title, date/time/clear, priority, notes, delete with Undo, original syllabus line). |
-| Dashboard | `lib/views/dashboard_view.dart` | Course filter chips (shown with ≥ 2 courses; long-press or ⚙ opens course settings), export menu, share, import. Animated cross-fade on filter change. |
+| Dashboard | `lib/views/dashboard_view.dart` | Course filter chips (shown with ≥ 2 courses; long-press or ⚙ opens course settings), export menu, share, import. Animated cross-fade on filter change. Rebuilds every minute and on app resume so time-based labels and sections stay current. |
 | Widgets | `lib/widgets/assignment_card.dart`, `share_dialog.dart`, `course_sheet.dart` | Card: swipe right = complete/un-complete, swipe left = delete, both with Undo; tap = container-transform into the editor; checkbox; animated strike-through and calendar icon. Share dialog: generate/copy code **and** copy the `.ics` feed link. Course sheet: rename, pick badge color, delete course + its assignments. |
 | Export | `lib/services/export_service.dart` | Markdown checklist and Notion-ready CSV (RFC 4180) for all courses or the filtered one, sent through the Android share sheet via `share_plus` (private FileProvider in the cache dir, no storage permission). |
 | **Add all to calendar** | `lib/services/ics_service.dart`, `lib/views/dashboard_view.dart`, `lib/state/assignment_store.dart` | Dashboard app-bar button (`edit_calendar` icon, respects the course filter). Builds one RFC 5545 `.ics` with every **dated, open, upcoming** assignment not already added one by one (those have no UID link, so re-adding would duplicate), confirms the count in a dialog, then hands the file to the share sheet (`text/calendar`) so the user picks their calendar app; no new plugin, no permission. Same format as `backend/app/ics.py` (floating times, escaping, 75-octet folding, CRLF) with stable `UID:assignment-<id>@duetoday`. Items are flagged `addedToCalendar` only when the share sheet reports a chosen target. Tested in `test/ics_service_test.dart` and two dashboard widget tests. **Not yet verified on a device:** Samsung Calendar opens `.ics` files; the Google Calendar Android app may not import them from the share sheet (fallback: save to Drive/email and import at calendar.google.com). |
@@ -247,6 +255,7 @@ Request:
       "title": "Midterm Exam",
       "task_type": "midterm",
       "due_datetime": "2026-09-28T23:59:00",
+      "time_specified": true,
       "weight_percent": 20,
       "points": null,
       "priority": "high",
@@ -259,7 +268,7 @@ Request:
 | --- | --- | --- | --- |
 | `course_code` | string 1–20 | yes | Normalized to upper case, single spaces. |
 | `course_name` | string ≤ 120 \| null | no | |
-| `tasks[]` | ≤ 500 items | no | `title` (1–200) required; `task_type` default `other`; `due_datetime` naive ISO or null; `weight_percent` 0–100; `points` ≥ 0; `priority` default `medium`; `notes` ≤ 2000. |
+| `tasks[]` | ≤ 500 items | no | `title` (1–200) required; `task_type` default `other`; `due_datetime` naive ISO or null; `time_specified` bool, default `true` (send `false` when the time is the parser's fallback); `weight_percent` 0–100; `points` ≥ 0; `priority` default `medium`; `notes` ≤ 2000. |
 
 Response `201`:
 ```json
@@ -274,6 +283,7 @@ Response `201`:
       "title": "Midterm Exam",
       "task_type": "midterm",
       "due_datetime": "2026-09-28T23:59:00",
+      "time_specified": true,
       "weight_percent": 20.0,
       "points": null,
       "priority": "high",
@@ -290,7 +300,7 @@ Response `201`:
 - `404 {"detail": "No course found for code H4PSD"}`
 - `422 {"detail": "Share codes are 5 letters/digits"}` for malformed codes.
 
-The app turns imported tasks into local assignments with id `shared-<CODE>-<task id>`, so re-importing the same code updates instead of duplicating.
+The app turns imported tasks into local assignments with id `shared-<CODE>-<task id>` and adds them with `AssignmentStore.importShared`. Re-importing a code, importing a re-shared code, or importing a course the student already parsed skips the items already on the phone instead of duplicating or overwriting them. A missing `time_specified` (courses shared before 2026-11-12) is read as `true`.
 
 ### `GET /api/courses/{code}/calendar.ics`: subscribable calendar feed
 - `200`, `Content-Type: text/calendar; charset=utf-8`, CRLF line endings. Same 404/422 rules as above.

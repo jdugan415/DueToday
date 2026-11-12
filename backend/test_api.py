@@ -90,6 +90,20 @@ def test_share_and_import_course(client):
     assert all(isinstance(t["id"], int) for t in tasks)
 
 
+def test_share_round_trips_time_specified(client):
+    course = _share(
+        client,
+        [
+            {"title": "HW 1", "due_datetime": "2026-09-04T23:59:00", "time_specified": False},
+            {"title": "Quiz 1", "due_datetime": "2026-09-16T10:30:00", "time_specified": True},
+            {"title": "Old client", "due_datetime": "2026-09-20T09:00:00"},
+        ],
+    )
+    fetched = client.get(f"/api/courses/{course['share_code']}").json()
+    flags = {t["title"]: t["time_specified"] for t in fetched["tasks"]}
+    assert flags == {"HW 1": False, "Quiz 1": True, "Old client": True}
+
+
 def test_import_unknown_and_malformed_codes(client):
     assert client.get("/api/courses/ABCDE").status_code == 404
     assert client.get("/api/courses/AB0").status_code == 422

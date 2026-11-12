@@ -244,4 +244,30 @@ void main() {
     await tester.pump();
     expect(find.text('Everything upcoming is already in your calendar.'), findsOneWidget);
   });
+
+  testWidgets('dashboard follows the clock each minute and on resume', (tester) async {
+    _usePhoneScreen(tester);
+    var clock = DateTime(2026, 9, 1, 9); // Tuesday 9 AM
+    SharedPreferences.setMockInitialValues({});
+    final store = AssignmentStore(await StorageService.create(), clock: () => clock);
+    await store.load();
+    await store.addAll(const Course(code: 'CSC 4330'), [
+      Assignment(id: 'a1', courseCode: 'CSC 4330', title: 'Lab 1', dueAt: DateTime(2026, 9, 1, 9, 30), timeSpecified: true),
+    ]);
+    await tester.pumpWidget(DueTodayApp(store: store, api: _offlineApi()));
+    expect(find.text('Due in 30m'), findsOneWidget);
+
+    // A minute tick re-reads the clock without any user action.
+    clock = DateTime(2026, 9, 1, 10);
+    await tester.pump(const Duration(minutes: 1));
+    expect(find.text('Due in 30m'), findsNothing);
+    expect(find.text('Overdue'), findsWidgets);
+
+    // Reopened the next morning: the header date catches up immediately.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    clock = DateTime(2026, 9, 2, 8);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(find.text('WEDNESDAY, SEP 2'), findsOneWidget);
+  });
 }
