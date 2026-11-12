@@ -92,7 +92,9 @@ class Assignment {
       title: json['title'] as String,
       taskType: json['task_type'] as String? ?? 'other',
       dueAt: dueAt,
-      timeSpecified: dueAt != null,
+      // Courses shared before the backend stored the flag omit it; their
+      // times were shown as set, so keep that.
+      timeSpecified: dueAt != null && (json['time_specified'] as bool? ?? true),
       weightPercent: (json['weight_percent'] as num?)?.toDouble(),
       points: (json['points'] as num?)?.toInt(),
       priority: priorityFromName(json['priority'] as String?),
@@ -142,6 +144,7 @@ class Assignment {
         'title': title,
         'task_type': taskType,
         'due_datetime': dueAt == null ? null : formatNaiveDateTime(dueAt!),
+        'time_specified': timeSpecified,
         'weight_percent': weightPercent,
         'points': points,
         'priority': priority.name,

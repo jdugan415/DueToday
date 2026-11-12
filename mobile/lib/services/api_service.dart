@@ -76,7 +76,7 @@ class ApiService {
           }),
         ));
 
-    return _toParseResult(body, requestedCode);
+    return _decode(() => _toParseResult(body, requestedCode));
   }
 
   /// Largest upload `POST /api/parse-pdf` accepts (mirrors MAX_PDF_BYTES).
@@ -113,7 +113,7 @@ class ApiService {
       () async => http.Response.fromStream(await _client.send(request)),
       timeout: pdfTimeout,
     );
-    return _toParseResult(body, requestedCode);
+    return _decode(() => _toParseResult(body, requestedCode));
   }
 
   static String? _normalizedCode(String? raw) =>
@@ -125,7 +125,7 @@ class ApiService {
     return ParseResult(
       courseCode: code,
       assignments: tasks.map((t) => Assignment.fromParsedJson(t, courseCode: code)).toList(),
-      warnings: (body['warnings'] as List? ?? const []).cast<String>(),
+      warnings: (body['warnings'] as List? ?? const []).cast<String>().toList(),
     );
   }
 
@@ -140,26 +140,47 @@ class ApiService {
             'tasks': assignments.map((a) => a.toTaskInJson()).toList(),
           }),
         ));
-    return body['share_code'] as String;
+    return _decode(() => body['share_code'] as String);
   }
 
   /// `GET /api/courses/{code}`.
   Future<SharedCourse> importCourse(String shareCode) async {
     final code = shareCode.trim().toUpperCase();
     final body = await _send(() => _client.get(_uri('/api/courses/$code')));
-    final courseCode = body['course_code'] as String;
-    final tasks = (body['tasks'] as List).cast<Map<String, dynamic>>();
-    return SharedCourse(
-      course: Course(
-        code: courseCode,
-        name: body['course_name'] as String?,
-        shareCode: body['share_code'] as String?,
-      ),
-      assignments: tasks
-          .map((t) => Assignment.fromSharedJson(t, courseCode: courseCode, shareCode: code))
-          .toList(),
-    );
+    return _decode(() {
+      final courseCode = body['course_code'] as String;
+      final tasks = (body['tasks'] as List).cast<Map<String, dynamic>>();
+      return SharedCourse(
+        course: Course(
+          code: courseCode,
+          name: body['course_name'] as String?,
+          shareCode: body['share_code'] as String?,
+        ),
+        assignments: tasks
+            .map((t) => Assignment.fromSharedJson(t, courseCode: courseCode, shareCode: code))
+            .toList(),
+      );
+    });
   }
+
+  /// Runs [parse] over a decoded JSON body. A body that doesn't match the API
+  /// contract (missing field, wrong type, bad date) becomes an [ApiException]
+  /// so screens show their usual error and retry instead of hanging.
+  ///
+  /// Catching [TypeError] is deliberate here: the `as` casts are validating
+  /// untrusted server data, not guarding against a bug in this app.
+  static T _decode<T>(T Function() parse) {
+    try {
+      return parse();
+    } on TypeError {
+      throw const ApiException(_unexpectedResponse);
+    } on FormatException {
+      throw const ApiException(_unexpectedResponse);
+    }
+  }
+
+  static const String _unexpectedResponse =
+      'The server sent a response DueToday could not read. Try again in a moment.';
 
   /// Public iCalendar feed for a shared course
   /// (`GET /api/courses/{code}/calendar.ics`). Subscribing to it in Google

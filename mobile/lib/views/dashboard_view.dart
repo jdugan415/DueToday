@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -25,11 +27,49 @@ class DashboardView extends StatefulWidget {
   State<DashboardView> createState() => _DashboardViewState();
 }
 
-class _DashboardViewState extends State<DashboardView> {
+class _DashboardViewState extends State<DashboardView> with WidgetsBindingObserver {
   /// Selected course code, or null for all courses.
   String? _filter;
 
+  /// Rebuilds once a minute so countdowns ("Due in 4h") and the Overdue /
+  /// Due Today / This Week sections follow the clock, not just user actions.
+  Timer? _tick;
+
   static const Duration _fade = Duration(milliseconds: 250);
+  static const Duration _tickInterval = Duration(minutes: 1);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _startTicking();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Reopened after hours or overnight: catch up at once, then keep ticking.
+      setState(() {});
+      _startTicking();
+    } else if (state == AppLifecycleState.paused) {
+      _tick?.cancel();
+      _tick = null;
+    }
+  }
+
+  void _startTicking() {
+    _tick?.cancel();
+    _tick = Timer.periodic(_tickInterval, (_) {
+      if (mounted) setState(() {});
+    });
+  }
 
   void _openPaste() => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const PasteView()));
 

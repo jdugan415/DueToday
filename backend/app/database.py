@@ -17,7 +17,18 @@ import secrets
 from collections.abc import Iterator
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, create_engine, select
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    select,
+    true,
+)
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
@@ -76,6 +87,9 @@ class TaskRecord(Base):
     task_type: Mapped[str] = mapped_column(String(32), default="other")
     # Naive local wall-clock time, matching the parser output (no UTC offset).
     due_datetime: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    # False when the syllabus gave only a date and due_datetime holds the
+    # default fallback time. Rows shared before 0002 default to True.
+    time_specified: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     weight_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
     points: Mapped[int | None] = mapped_column(Integer, nullable=True)
     priority: Mapped[str] = mapped_column(String(8), default="medium")

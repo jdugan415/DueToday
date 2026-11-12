@@ -77,6 +77,9 @@ class TaskIn(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     task_type: TaskType = "other"
     due_datetime: datetime | None = None
+    # False when due_datetime's time is the parser's fallback, not from the
+    # syllabus. Defaults to True so older app versions keep today's behavior.
+    time_specified: bool = True
     weight_percent: float | None = Field(default=None, ge=0, le=100)
     points: int | None = Field(default=None, ge=0)
     priority: Priority = "medium"

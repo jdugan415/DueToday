@@ -41,17 +41,50 @@ class AssignmentStore extends ChangeNotifier {
 
   /// Adds new assignments for [course], keeping saved assignments on ID matches.
   Future<void> addAll(Course course, List<Assignment> items) async {
-    final existing = _courses[course.code];
-    _courses[course.code] = existing == null
-        ? course.copyWith(colorIndex: courseColorIndexFor(course.code))
-        : existing.copyWith(name: course.name, shareCode: course.shareCode);
-
+    _mergeCourse(course);
     final byId = {for (final item in _assignments) item.id: item};
     for (final item in items) {
       byId.putIfAbsent(item.id, () => item.copyWith(courseCode: course.code));
     }
     _assignments = byId.values.toList();
     await _persist();
+  }
+
+  /// Adds a classmate's shared course. Items already on this phone are kept
+  /// as they are (with their completed state): a match is the same id (the
+  /// same code imported again) or, in the same course, the same title and
+  /// due day (the student parsed this syllabus too, or the course was
+  /// re-shared under a new code). Returns how many items were new.
+  Future<int> importShared(Course course, List<Assignment> items) async {
+    _mergeCourse(course);
+    final ids = {for (final a in _assignments) a.id};
+    final keys = {
+      for (final a in _assignments)
+        if (a.courseCode == course.code) _matchKey(a),
+    };
+    final added = <Assignment>[];
+    for (final item in items) {
+      final a = item.copyWith(courseCode: course.code);
+      if (ids.contains(a.id) || !keys.add(_matchKey(a))) continue;
+      ids.add(a.id);
+      added.add(a);
+    }
+    _assignments = [..._assignments, ...added];
+    await _persist();
+    return added.length;
+  }
+
+  static String _matchKey(Assignment a) {
+    final title = a.title.trim().toLowerCase().split(RegExp(r'\s+')).join(' ');
+    final due = a.dueAt;
+    return due == null ? '$title|' : '$title|${due.year}-${due.month}-${due.day}';
+  }
+
+  void _mergeCourse(Course course) {
+    final existing = _courses[course.code];
+    _courses[course.code] = existing == null
+        ? course.copyWith(colorIndex: courseColorIndexFor(course.code))
+        : existing.copyWith(name: course.name, shareCode: course.shareCode);
   }
 
   Future<void> update(Assignment updated) async {

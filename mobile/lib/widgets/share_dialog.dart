@@ -259,19 +259,17 @@ class _ImportDialogState extends State<_ImportDialog> {
     });
     try {
       final shared = await api.importCourse(_controller.text);
-      await store.addAll(shared.course, shared.assignments);
+      final added = await store.importShared(shared.course, shared.assignments);
       if (!mounted) return;
       HapticFeedback.mediumImpact();
       navigator.pop();
-      messenger.showSnackBar(SnackBar(
-        content: Text('Imported ${shared.assignments.length} items for ${shared.course.code}'),
-      ));
+      messenger.showSnackBar(SnackBar(content: Text(_importSummary(shared, added))));
     } on ApiException catch (error) {
       if (!mounted) return;
-      setState(() {
-        _error = error.statusCode == 404 ? 'No class found with that code.' : error.message;
-        _loading = false;
-      });
+      setState(() => _error = error.statusCode == 404 ? 'No class found with that code.' : error.message);
+    } finally {
+      // Also reached when saving fails, so the button never stays spinning.
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -308,6 +306,15 @@ class _ImportDialogState extends State<_ImportDialog> {
       ],
     );
   }
+}
+
+String _importSummary(SharedCourse shared, int added) {
+  final code = shared.course.code;
+  final skipped = shared.assignments.length - added;
+  final items = added == 1 ? '1 item' : '$added items';
+  if (skipped == 0) return 'Imported $items for $code';
+  if (added == 0) return 'Everything in $code is already on your phone.';
+  return 'Imported $items for $code ($skipped already on your phone)';
 }
 
 class UpperCaseTextFormatter extends TextInputFormatter {
