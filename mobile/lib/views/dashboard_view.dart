@@ -222,10 +222,7 @@ class _DashboardViewState extends State<DashboardView> with WidgetsBindingObserv
     final now = store.now();
     final items = IcsService.eligible(visible, now);
     if (items.isEmpty) {
-      final allAdded = visible.any((a) => a.addedToCalendar && !a.completed && (a.dueAt?.isAfter(now) ?? false));
-      messenger.showSnackBar(SnackBar(
-        content: Text(allAdded ? 'Everything upcoming is already in your calendar.' : 'No upcoming deadlines to add.'),
-      ));
+      messenger.showSnackBar(const SnackBar(content: Text('No upcoming deadlines to add.')));
       return;
     }
 
@@ -236,7 +233,7 @@ class _DashboardViewState extends State<DashboardView> with WidgetsBindingObserv
         title: Text('Add $count to your calendar?'),
         content: Text(
           'Upcoming assignments from ${course?.displayName ?? 'all courses'} go into one calendar file. '
-          'Pick your calendar app on the next screen, then confirm the import there.',
+          'Pick your calendar app and confirm the import there. If you already saved an event, importing it again may duplicate it.',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
@@ -244,7 +241,7 @@ class _DashboardViewState extends State<DashboardView> with WidgetsBindingObserv
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true || !context.mounted) return;
 
     HapticFeedback.lightImpact();
     try {
@@ -252,12 +249,11 @@ class _DashboardViewState extends State<DashboardView> with WidgetsBindingObserv
         items,
         calendarName: course == null ? 'DueToday' : 'DueToday · ${course.code}',
       );
-      if (result.status == ShareResultStatus.success) {
-        await store.markAllAddedToCalendar(items.map((a) => a.id));
-        messenger.showSnackBar(SnackBar(content: Text('Sent $count to your calendar app.')));
+      if (context.mounted && result.status == ShareResultStatus.success) {
+        messenger.showSnackBar(const SnackBar(content: Text('Shared calendar file. Confirm the import in your calendar app.')));
       }
     } on Exception catch (error) {
-      messenger.showSnackBar(SnackBar(content: Text("Couldn't open the calendar file: $error")));
+      if (context.mounted) messenger.showSnackBar(SnackBar(content: Text("Couldn't open the calendar file: $error")));
     }
   }
 

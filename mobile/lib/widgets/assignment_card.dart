@@ -172,7 +172,6 @@ class _CardBody extends StatelessWidget {
               Row(
                 children: [
                   _CalendarPill(
-                    added: assignment.addedToCalendar,
                     enabled: assignment.dueAt != null,
                     onTap: () => _addToCalendar(context),
                   ),
@@ -228,11 +227,12 @@ class _CardBody extends StatelessWidget {
     } on PlatformException {
       launched = false;
     }
-    if (launched) {
-      await store.markAddedToCalendar(assignment.id);
-    } else {
-      messenger.showSnackBar(const SnackBar(content: Text('No calendar app found on this device.')));
-    }
+    if (!context.mounted) return;
+    messenger.showSnackBar(SnackBar(
+      content: Text(launched
+          ? 'Opened in calendar. Save the event there.'
+          : 'No calendar app found on this device.'),
+    ));
   }
 
   static String _trim(double value) =>
@@ -260,9 +260,8 @@ class _UrgencyBadge extends StatelessWidget {
 }
 
 class _CalendarPill extends StatelessWidget {
-  const _CalendarPill({required this.added, required this.enabled, required this.onTap});
+  const _CalendarPill({required this.enabled, required this.onTap});
 
-  final bool added;
   final bool enabled;
   final VoidCallback onTap;
 
@@ -270,13 +269,11 @@ class _CalendarPill extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.colors;
     final scheme = Theme.of(context).colorScheme;
-    final foreground = added ? colors.success : (enabled ? scheme.onPrimaryContainer : colors.textSecondary);
-    final background = added
-        ? colors.success.withValues(alpha: 0.12)
-        : (enabled ? scheme.primaryContainer : colors.fieldFill);
+    final foreground = enabled ? scheme.onPrimaryContainer : colors.textSecondary;
+    final background = enabled ? scheme.primaryContainer : colors.fieldFill;
     return Semantics(
       button: true,
-      label: added ? 'Add to calendar again' : 'Add to calendar',
+      label: 'Add to calendar',
       child: Material(
         color: background,
         shape: const StadiumBorder(),
@@ -288,19 +285,10 @@ class _CalendarPill extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 250),
-                  transitionBuilder: (child, animation) => ScaleTransition(scale: animation, child: child),
-                  child: Icon(
-                    added ? Icons.event_available_rounded : Icons.calendar_today_rounded,
-                    key: ValueKey(added),
-                    size: 14,
-                    color: foreground,
-                  ),
-                ),
+                Icon(Icons.calendar_today_rounded, size: 14, color: foreground),
                 const SizedBox(width: 6),
                 Text(
-                  added ? 'In Calendar' : 'Add to Calendar',
+                  'Add to Calendar',
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(color: foreground),
                 ),
               ],

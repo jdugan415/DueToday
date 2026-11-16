@@ -5,6 +5,7 @@ import 'package:due_today/services/api_service.dart';
 import 'package:due_today/services/storage_service.dart';
 import 'package:due_today/state/assignment_store.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -231,18 +232,31 @@ void main() {
     expect(store.assignments.where((a) => a.addedToCalendar), isEmpty);
   });
 
-  testWidgets('add all to calendar says when everything is already added', (tester) async {
+  testWidgets('calendar handoff and legacy flags do not block bulk export', (tester) async {
     _usePhoneScreen(tester);
     final store = await _store(now);
     await store.addAll(const Course(code: 'CSC 4330'), [
       Assignment(id: 'up1', courseCode: 'CSC 4330', title: 'Lab 2', dueAt: DateTime(2026, 9, 3, 17)),
+      Assignment(id: 'legacy', courseCode: 'CSC 4330', title: 'Quiz 1',
+          dueAt: DateTime(2026, 9, 10, 9), addedToCalendar: true),
     ]);
-    await store.markAllAddedToCalendar(['up1']);
+    const channel = MethodChannel('add_2_calendar');
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'add2Cal');
+      return true; // The calendar opened, but the student didn't save.
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
     await tester.pumpWidget(DueTodayApp(store: store, api: _offlineApi()));
 
+    await tester.tap(find.text('Add to Calendar').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Opened in calendar. Save the event there.'), findsOneWidget);
+    expect(store.assignments.first.addedToCalendar, isFalse);
+
     await tester.tap(find.byTooltip('Add all to calendar'));
-    await tester.pump();
-    expect(find.text('Everything upcoming is already in your calendar.'), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.text('Add 2 deadlines to your calendar?'), findsOneWidget);
   });
 
   testWidgets('dashboard follows the clock each minute and on resume', (tester) async {

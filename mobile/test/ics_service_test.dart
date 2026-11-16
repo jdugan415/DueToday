@@ -28,7 +28,7 @@ void main() {
   );
 
   group('eligible', () {
-    test('keeps dated, open, upcoming, not-yet-added items, soonest first', () {
+    test('keeps dated, open, upcoming, including previously handed-off items, soonest first', () {
       final items = IcsService.eligible([
         midterm,
         lab,
@@ -37,7 +37,7 @@ void main() {
         Assignment(id: 'added', courseCode: 'X', title: 'HW 2', dueAt: DateTime(2026, 9, 6), addedToCalendar: true),
         const Assignment(id: 'undated', courseCode: 'X', title: 'Final Project'),
       ], now);
-      expect(items.map((a) => a.id), ['shared-H4PSD-7', 'f305cf8b3c03']);
+      expect(items.map((a) => a.id), ['shared-H4PSD-7', 'added', 'f305cf8b3c03']);
     });
   });
 

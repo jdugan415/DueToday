@@ -23,12 +23,11 @@ class IcsService {
 
   static const String mimeType = 'text/calendar';
 
-  /// Assignments worth exporting: dated, not completed, still ahead of [now],
-  /// and not already sent one by one (those events have no UID link, so
-  /// exporting them again would create duplicates). Soonest first.
+  /// Dated, open assignments still ahead of [now], soonest first.
+  /// A previous handoff does not prove that an event was saved.
   static List<Assignment> eligible(Iterable<Assignment> assignments, DateTime now) => [
         for (final a in assignments)
-          if (a.dueAt != null && !a.completed && !a.addedToCalendar && a.dueAt!.isAfter(now)) a,
+          if (a.dueAt != null && !a.completed && a.dueAt!.isAfter(now)) a,
       ]..sort((a, b) => a.dueAt!.compareTo(b.dueAt!));
 
   /// Renders [assignments] as a VCALENDAR. Undated items are skipped.
