@@ -81,6 +81,8 @@ Add a pytest case to `backend/test_parser.py` for every parser change or bug rep
 
 ### ✅ Implemented
 
+- **2026-11-19 duplicate parser details:** matching normalized titles on the same date merge before response construction. Explicit times replace missing times; available weights and points are preserved, including grading-table metadata attached to an exact date that replaces an overview window. Conflicting explicit times keep the first time as a review candidate, lower confidence to 0.6, and emit a warning with combined source lines. Different dates remain separate; conflicting grading values retain the first non-null value. No API fields changed.
+
 - **2026-11-12 code-review fixes (ECC Flutter/Dart review):**
   1. *Shared courses keep date-only deadlines date-only.* `time_specified` is now sent in `POST /api/courses`, stored in a new `tasks.time_specified` column (Alembic `0002`, server default `true`), and returned by `GET /api/courses/{code}`. Before, every imported dated item showed the parser's fallback 11:59 PM as if the syllabus said so. Rows shared earlier, and older app versions that don't send the flag, default to `true`, which is the old behavior.
   2. *Importing a class code no longer duplicates the student's own items.* See `importShared` in §1.

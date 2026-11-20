@@ -375,6 +375,60 @@ def test_ids_are_stable():
     assert first == second and len(first) == 12
 
 
+@pytest.mark.parametrize('reverse', [False, True])
+def test_duplicate_details_prefer_explicit_time_and_keep_grading(reverse):
+    lines = ['October 21 Exam 2', 'October 21 Exam 2 at 9am (25%) (100 pts)']
+    task = only_task('\n'.join(reversed(lines) if reverse else lines))
+    assert task.due_time == '09:00'
+    assert task.time_specified is True
+    assert task.weight_percent == 25
+    assert task.points == 100
+
+
+def test_conflicting_explicit_times_request_review():
+    result = parse('October 21 Exam 2 at 9am\nOctober 21 Exam 2 at 2pm\nOctober 21 Exam 2')
+    assert len(result.tasks) == 1
+    task = result.tasks[0]
+    assert task.due_time == '09:00'
+    assert task.confidence < 0.8
+    assert task.time_specified is True
+    assert '9am' in task.source_line and '2pm' in task.source_line
+    assert any('Conflicting times' in warning for warning in result.warnings)
+
+
+def test_repeated_explicit_time_does_not_warn():
+    result = parse('October 21 Exam 2 at 9am\nOctober 21 Exam 2 at 9am (25%)')
+    assert len(result.tasks) == 1
+    assert not result.warnings
+    assert result.tasks[0].confidence >= 0.8
+
+
+def test_explicit_default_time_is_still_explicit():
+    task = only_task('October 21 Lab 2\nOctober 21 Lab 2 at 11:59pm')
+    assert task.due_time == '23:59'
+    assert task.time_specified is True
+
+
+def test_duplicate_grading_details_combine_across_rows():
+    task = only_task('October 21 Lab 2 (5%)\nOctober 21 Lab 2 (50 pts) at 2pm')
+    assert task.weight_percent == 5
+    assert task.points == 50
+    assert task.due_time == '14:00'
+
+
+def test_window_and_grading_details_reach_surviving_exact_date():
+    task = only_task('Exam 2 (25%)\n10/19-10/23 Exam 2 (100 pts)\nExam 2 October 21 at 9am')
+    assert task.due_date == date(2026, 10, 21)
+    assert task.due_time == '09:00'
+    assert task.weight_percent == 25
+    assert task.points == 100
+
+
+def test_same_title_on_different_dates_is_not_merged():
+    result = parse('October 21 Quiz at 9am\nOctober 28 Quiz at 2pm')
+    assert len(result.tasks) == 2
+
+
 # Synthetic reproductions of patterns audited in five public syllabi.
 # Source links and audit limits: PARSER_ACCURACY.md. No source syllabus text.
 @pytest.mark.parametrize(
