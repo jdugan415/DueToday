@@ -211,6 +211,7 @@ class _Draft:
     confidence: float
     source_line: str
     window_start: date | None = None
+    time_conflict: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -245,18 +246,15 @@ def parse_syllabus(
 
     tasks: list[ParsedTask] = []
     warnings: list[str] = []
-    seen: set[tuple[str, date | None]] = set()
     resolved_code = _normalize_course_code(course_code) or detect_course_code(raw_text)
 
     for draft in drafts:
-        key = (draft.title.lower(), draft.due_date)
-        if key in seen:
-            continue
-        seen.add(key)
-
         due_time = draft.due_time or fallback_time
         confidence = draft.confidence - (0.05 if draft.due_time is None else 0.0)
         due_datetime = datetime.combine(draft.due_date, due_time) if draft.due_date else None
+        if draft.time_conflict:
+            confidence = min(confidence, 0.6)
+            warnings.append(f"Conflicting times for '{draft.title}' on {draft.due_date}. Check the syllabus before saving.")
         if draft.due_date is None:
             warnings.append(f"No date found for '{draft.title}'. Set one before saving.")
 
@@ -301,6 +299,21 @@ def _consolidate(drafts: list[_Draft]) -> list[_Draft]:
     dropped. Remaining undated drafts are kept only if they look like a title:
     not a bare keyword heading ("Homework") and not a sentence fragment.
     """
+    # Resolve windows before attaching grading-table metadata to dated twins.
+    survivors: list[_Draft] = []
+    for draft in drafts:
+        exact = next((
+            other for other in drafts
+            if draft.window_start is not None
+            and other.window_start is None and other.due_date is not None
+            and draft.window_start <= other.due_date <= draft.due_date
+            and _title_key(other.title) == _title_key(draft.title)
+        ), None)
+        if exact is not None:
+            _merge_grading(exact, draft)
+        else:
+            survivors.append(draft)
+    drafts = survivors
     dated: dict[str, _Draft] = {}
     for draft in drafts:
         if draft.due_date is not None:
@@ -316,27 +329,39 @@ def _consolidate(drafts: list[_Draft]) -> list[_Draft]:
 
     kept: list[_Draft] = []
     for draft in drafts:
-        if draft.window_start is not None and any(
-            other is not draft and other.window_start is None
-            and other.due_date is not None
-            and draft.window_start <= other.due_date <= draft.due_date
-            and _title_key(other.title) == _title_key(draft.title)
-            for other in drafts
-        ):
-            # The precise exam table supersedes its weekly overview row.
-            continue
         if draft.due_date is None:
             twin = dated.get(_title_key(draft.title))
             if twin is not None:
-                twin.weight_percent = twin.weight_percent if twin.weight_percent is not None else draft.weight_percent
-                twin.points = twin.points if twin.points is not None else draft.points
+                _merge_grading(twin, draft)
                 continue
             if _TASK_RE.fullmatch(draft.title) or len(draft.title.split()) > _MAX_UNDATED_TITLE_WORDS:
                 continue
         elif _reads_like_sentence(draft.title) and (draft.task_type, draft.due_date, draft.due_time) in short_slots:
             continue
         kept.append(draft)
-    return kept
+    merged: dict[tuple[str, date | None], _Draft] = {}
+    for draft in kept:
+        key = (_title_key(draft.title), draft.due_date)
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = draft
+            continue
+        _merge_grading(existing, draft)
+        if existing.due_time is None:
+            existing.due_time = draft.due_time
+        elif draft.due_time is not None and existing.due_time != draft.due_time:
+            existing.time_conflict = True
+        existing.confidence = max(existing.confidence, draft.confidence)
+        if draft.source_line not in existing.source_line.splitlines():
+            existing.source_line += '\n' + draft.source_line
+    return list(merged.values())
+
+
+def _merge_grading(target: _Draft, source: _Draft) -> None:
+    if target.weight_percent is None:
+        target.weight_percent = source.weight_percent
+    if target.points is None:
+        target.points = source.points
 
 
 def _reads_like_sentence(title: str) -> bool:
